@@ -83,69 +83,8 @@ function debounce(func, wait) {
     };
 }
 
-// WebDAV Functions
-async function saveToFile(filename, content, retries = 3) {
-    try {
-        const data = typeof content === 'string' ? content : JSON.stringify(content);
-        JSON.parse(data); // Validate JSON
-        for (let attempt = 1; attempt <= retries; attempt++) {
-            try {
-                const controller = new AbortController();
-                const id = setTimeout(() => controller.abort(), 5000);
-                const res = await fetch(`${config.backupUrl}${filename}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'text/plain' },
-                    body: data,
-                    signal: controller.signal
-                });
-                clearTimeout(id);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return true;
-            } catch (err) {
-                if (attempt === retries) throw err;
-                await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-            }
-        }
-    } catch (err) {
-        addLog(`Lỗi khi lưu ${filename}: ${err.message}`, 'error');
-        return false;
-    }
-}
-
-async function loadFromFile(filename) {
-    try {
-        const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), 5000);
-        const res = await fetch(`${config.backupUrl}${filename}`, { signal: controller.signal });
-        clearTimeout(id);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.text();
-    } catch (err) {
-        addLog(`Lỗi khi đọc ${filename}: ${err.message}`, 'error');
-        return null;
-    }
-}
 
 
-
-
-
-// Data Management
-const debouncedSaveData = debounce(async () => {
-    const data = {
-        links: state.links,
-        logs: state.logs,
-        scrollPosition: state.scrollPosition,
-        dateFilter: state.dateFilter
-    };
-    const success = await saveToFile(config.dataFile, data);
-    if (success) {
-        saveToLocalStorage(); // Backup to localStorage
-    } else {
-        addLog('Không thể lưu dữ liệu vào WebDAV', 'error');
-        saveToLocalStorage(); // Fallback to localStorage
-    }
-}, config.debounceDelay);
 
 
 
