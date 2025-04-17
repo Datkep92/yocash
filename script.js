@@ -126,31 +126,9 @@ async function loadFromFile(filename) {
     }
 }
 
-// LocalStorage Backup
-function saveToLocalStorage() {
-    try {
-        localStorage.setItem('data-fb', JSON.stringify({
-            links: state.links,
-            fanpages: state.fanpages,
-            logs: state.logs,
-            scrollPosition: state.scrollPosition,
-            dateFilter: state.dateFilter,
-            fanpageFilter: state.fanpageFilter
-        }));
-    } catch (e) {
-        addLog(`Lỗi lưu localStorage: ${e.message}`, 'error');
-    }
-}
 
-function loadFromLocalStorage() {
-    try {
-        const data = localStorage.getItem('data-fb');
-        return data ? JSON.parse(data) : null;
-    } catch (e) {
-        addLog(`Lỗi tải localStorage: ${e.message}`, 'error');
-        return null;
-    }
-}
+
+
 
 // Data Management
 const debouncedSaveData = debounce(async () => {
@@ -169,104 +147,8 @@ const debouncedSaveData = debounce(async () => {
     }
 }, config.debounceDelay);
 
-async function saveData(changes = {}) {
-    if (Object.keys(changes).length === 0) return;
-    const data = {
-        links: state.links,
-        fanpages: state.fanpages,
-        logs: state.logs,
-        scrollPosition: state.scrollPosition,
-        dateFilter: state.dateFilter,
-        fanpageFilter: state.fanpageFilter
-    };
-    const success = await saveToFile(config.dataFile, data);
-    if (success) {
-        saveToLocalStorage();
-    } else {
-        addLog('Không thể lưu dữ liệu vào WebDAV', 'error');
-        saveToLocalStorage();
-    }
-}
 
-async function loadData() {
-    const showLoading = () => {
-        const loading = document.createElement('div');
-        loading.className = 'loading';
-        loading.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.7); color: #fff; padding: 10px 20px; border-radius: 4px; z-index: 1000;';
-        loading.textContent = 'Đang tải...';
-        document.body.appendChild(loading);
-        return () => document.body.removeChild(loading);
-    };
 
-    const hideLoading = showLoading();
-    try {
-        let savedData = null;
-        const savedContent = await loadFromFile(config.dataFile);
-        if (savedContent) {
-            try {
-                savedData = JSON.parse(savedContent);
-            } catch (e) {
-                addLog('Dữ liệu JSON không hợp lệ, thử localStorage', 'error');
-            }
-        }
-
-        if (!savedData) {
-            const localData = loadFromLocalStorage();
-            if (localData) {
-                savedData = localData;
-                addLog('Đã tải dữ liệu từ localStorage', 'info');
-            }
-        }
-
-        if (savedData) {
-            state.links = savedData.links || [];
-            state.fanpages = savedData.fanpages || [];
-            state.logs = savedData.logs || [];
-            state.scrollPosition = savedData.scrollPosition || 0;
-            state.dateFilter = savedData.dateFilter || {
-                startDate: '',
-                endDate: '',
-                status: 'all',
-                groupTitles: false,
-                searchQuery: ''
-            };
-            state.fanpageFilter = savedData.fanpageFilter || { currentPage: 1 };
-            state.links = state.links.map(link => ({
-                ...link,
-                post_type: link.post_type || 'unknown',
-                blacklistStatus: link.blacklistStatus || 'active',
-                checked: link.checked || false,
-                note: link.note || ''
-            }));
-            state.fanpages = state.fanpages.map(fanpage => ({
-                ...fanpage,
-                id: fanpage.id || generateId(),
-                url: fanpage.url || '',
-                name: fanpage.name || '',
-                status: fanpage.status || 'pending',
-                thumbnail: fanpage.thumbnail || config.defaultImage,
-                description: fanpage.description || ''
-            }));
-        } else {
-            addLog('Không tìm thấy dữ liệu, sử dụng mặc định', 'warning');
-        }
-
-        updateCounters();
-        switchTab('all-link');
-        if (elements.mainContent) {
-            elements.mainContent.scrollTop = state.scrollPosition;
-        }
-    } catch (error) {
-        console.error('Lỗi tải dữ liệu:', error);
-        showToast('Không thể tải dữ liệu, sử dụng mặc định', 'danger');
-        state.links = [];
-        state.fanpages = [];
-        updateCounters();
-        switchTab('all-link');
-    } finally {
-        hideLoading();
-    }
-}
 
 // Smooth Scroll
 function smoothScroll(element, targetPosition, duration = config.scrollDuration) {
@@ -291,7 +173,319 @@ function smoothScroll(element, targetPosition, duration = config.scrollDuration)
 
     requestAnimationFrame(animation);
 }
+// IndexedDB Initialization
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open('LinkManagerDB', 1);
 
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            // Create object stores
+            if (!db.objectStoreNames.contains('links')) {
+                db.createObjectStore('links', { keyPath: 'id' });
+            }
+            if (!db.objectStoreNames.contains('fanpages')) {
+                db.createObjectStore('fanpages', { keyPath: 'id' });
+            }
+            if (!db.objectStoreNames.contains('logs')) {
+                db.createObjectStore('logs', { keyPath: 'timestamp' });
+            }
+            if (!db.objectStoreNames.contains('state')) {
+                db.createObjectStore('state', { keyPath: 'key' });
+            }
+            if (!db.objectStoreNames.contains('undoStack')) {
+                db.createObjectStore('undoStack', { autoIncrement: true });
+            }
+        };
+
+        request.onsuccess = (event) => {
+            resolve(event.target.result);
+        };
+
+        request.onerror = (event) => {
+            reject(new Error(`IndexedDB error: ${event.target.errorCode}`));
+        };
+    });
+}
+
+// Save to IndexedDB
+async function saveToIndexedDB(storeName, data) {
+    try {
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([storeName], 'readwrite');
+            const store = transaction.objectStore(storeName);
+
+            // Handle array data (links, fanpages, logs, undoStack)
+            if (Array.isArray(data)) {
+                // Clear existing data
+                store.clear();
+                // Add new data
+                data.forEach(item => store.put(item));
+            } else {
+                // Handle single object (state)
+                store.put(data);
+            }
+
+            transaction.oncomplete = () => {
+                db.close();
+                resolve(true);
+            };
+
+            transaction.onerror = (event) => {
+                db.close();
+                reject(new Error(`Error saving to ${storeName}: ${event.target.error}`));
+            };
+        });
+    } catch (error) {
+        addLog(`Lỗi khi lưu vào IndexedDB (${storeName}): ${error.message}`, 'error');
+        return false;
+    }
+}
+
+// Load from IndexedDB
+async function loadFromIndexedDB(storeName) {
+    try {
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([storeName], 'readonly');
+            const store = transaction.objectStore(storeName);
+            const request = store.getAll();
+
+            request.onsuccess = () => {
+                db.close();
+                resolve(request.result);
+            };
+
+            request.onerror = (event) => {
+                db.close();
+                reject(new Error(`Error loading from ${storeName}: ${event.target.error}`));
+            };
+        });
+    } catch (error) {
+        addLog(`Lỗi khi tải từ IndexedDB (${storeName}): ${error.message}`, 'error');
+        return null;
+    }
+}
+
+// Migrate from LocalStorage to IndexedDB (Optional, for first-time migration)
+async function migrateFromLocalStorage() {
+    try {
+        const localData = localStorage.getItem('data-fb');
+        if (!localData) return false;
+
+        const data = JSON.parse(localData);
+        if (!data) return false;
+
+        await saveToIndexedDB('links', data.links || []);
+        await saveToIndexedDB('fanpages', data.fanpages || []);
+        await saveToIndexedDB('logs', data.logs || []);
+        await saveToIndexedDB('state', {
+            key: 'appState',
+            scrollPosition: data.scrollPosition || 0,
+            dateFilter: data.dateFilter || {
+                startDate: '',
+                endDate: '',
+                status: 'all',
+                groupTitles: false,
+                searchQuery: ''
+            },
+            fanpageFilter: data.fanpageFilter || { currentPage: 1 }
+        });
+        // Note: LocalStorage doesn't store undoStack, so we skip it
+
+        addLog('Đã di chuyển dữ liệu từ LocalStorage sang IndexedDB', 'info');
+        localStorage.removeItem('data-fb'); // Clean up after migration
+        return true;
+    } catch (error) {
+        addLog(`Lỗi khi di chuyển dữ liệu từ LocalStorage: ${error.message}`, 'error');
+        return false;
+    }
+}
+
+// Modified saveToLocalStorage (as a fallback)
+function saveToLocalStorage() {
+    try {
+        localStorage.setItem('data-fb', JSON.stringify({
+            links: state.links,
+            fanpages: state.fanpages,
+            logs: state.logs,
+            scrollPosition: state.scrollPosition,
+            dateFilter: state.dateFilter,
+            fanpageFilter: state.fanpageFilter
+        }));
+        addLog('Đã lưu dữ liệu vào LocalStorage (backup)', 'info');
+    } catch (e) {
+        addLog(`Lỗi lưu LocalStorage: ${e.message}`, 'error');
+    }
+}
+
+// Modified loadFromLocalStorage (as a fallback)
+function loadFromLocalStorage() {
+    try {
+        const data = localStorage.getItem('data-fb');
+        return data ? JSON.parse(data) : null;
+    } catch (e) {
+        addLog(`Lỗi tải LocalStorage: ${e.message}`, 'error');
+        return null;
+    }
+}
+
+// Modified saveData
+async function saveData(changes = {}) {
+    if (Object.keys(changes).length === 0) return;
+
+    try {
+        // Save to IndexedDB
+        if (changes.links) await saveToIndexedDB('links', state.links);
+        if (changes.fanpages) await saveToIndexedDB('fanpages', state.fanpages);
+        if (changes.logs) await saveToIndexedDB('logs', state.logs);
+        if (changes.undoStack) await saveToIndexedDB('undoStack', state.undoStack);
+        if (changes.scrollPosition || changes.dateFilter || changes.fanpageFilter) {
+            await saveToIndexedDB('state', {
+                key: 'appState',
+                scrollPosition: state.scrollPosition,
+                dateFilter: state.dateFilter,
+                fanpageFilter: state.fanpageFilter
+            });
+        }
+
+        // Backup to LocalStorage as a fallback
+        saveToLocalStorage();
+        addLog('Dữ liệu đã được lưu vào IndexedDB', 'success');
+    } catch (error) {
+        addLog(`Lỗi khi lưu dữ liệu vào IndexedDB: ${error.message}`, 'error');
+        saveToLocalStorage(); // Fallback to LocalStorage
+    }
+}
+
+// Modified debouncedSaveData
+const debouncedSaveData = debounce(async () => {
+    try {
+        await saveToIndexedDB('links', state.links);
+        await saveToIndexedDB('logs', state.logs);
+        await saveToIndexedDB('state', {
+            key: 'appState',
+            scrollPosition: state.scrollPosition,
+            dateFilter: state.dateFilter,
+            fanpageFilter: state.fanpageFilter
+        });
+        saveToLocalStorage(); // Backup to LocalStorage
+        addLog('Dữ liệu đã được lưu vào IndexedDB (debounced)', 'success');
+    } catch (error) {
+        addLog('Không thể lưu dữ liệu vào IndexedDB', 'error');
+        saveToLocalStorage(); // Fallback to LocalStorage
+    }
+}, config.debounceDelay);
+
+// Modified loadData
+async function loadData() {
+    const showLoading = () => {
+        const loading = document.createElement('div');
+        loading.className = 'loading';
+        loading.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.7); color: #fff; padding: 10px 20px; border-radius: 4px; z-index: 1000;';
+        loading.textContent = 'Đang tải...';
+        document.body.appendChild(loading);
+        return () => document.body.removeChild(loading);
+    };
+
+    const hideLoading = showLoading();
+    try {
+        // Try loading from IndexedDB
+        let links = await loadFromIndexedDB('links');
+        let fanpages = await loadFromIndexedDB('fanpages');
+        let logs = await loadFromIndexedDB('logs');
+        let undoStack = await loadFromIndexedDB('undoStack');
+        let appState = await loadFromIndexedDB('state');
+
+        // If no data in IndexedDB, try migrating from LocalStorage
+        if (!links && !fanpages && !logs && !appState) {
+            const migrated = await migrateFromLocalStorage();
+            if (migrated) {
+                // Reload after migration
+                links = await loadFromIndexedDB('links');
+                fanpages = await loadFromIndexedDB('fanpages');
+                logs = await loadFromIndexedDB('logs');
+                appState = await loadFromIndexedDB('state');
+            }
+        }
+
+        // If still no data, try LocalStorage as a fallback
+        if (!links && !fanpages && !logs && !appState) {
+            const localData = loadFromLocalStorage();
+            if (localData) {
+                links = localData.links;
+                fanpages = localData.fanpages;
+                logs = localData.logs;
+                appState = [{
+                    key: 'appState',
+                    scrollPosition: localData.scrollPosition,
+                    dateFilter: localData.dateFilter,
+                    fanpageFilter: localData.fanpageFilter
+                }];
+                addLog('Đã tải dữ liệu từ LocalStorage (fallback)', 'info');
+            }
+        }
+
+        // Apply loaded data
+        if (links || fanpages || logs || appState) {
+            state.links = links || [];
+            state.fanpages = fanpages || [];
+            state.logs = logs || [];
+            state.undoStack = undoStack || [];
+            if (appState && appState.length > 0) {
+                state.scrollPosition = appState[0].scrollPosition || 0;
+                state.dateFilter = appState[0].dateFilter || {
+                    startDate: '',
+                    endDate: '',
+                    status: 'all',
+                    groupTitles: false,
+                    searchQuery: ''
+                };
+                state.fanpageFilter = appState[0].fanpageFilter || { currentPage: 1 };
+            }
+
+            // Normalize link data
+            state.links = state.links.map(link => ({
+                ...link,
+                post_type: link.post_type || 'unknown',
+                blacklistStatus: link.blacklistStatus || 'active',
+                checked: link.checked || false,
+                note: link.note || ''
+            }));
+
+            // Normalize fanpage data
+            state.fanpages = state.fanpages.map(fanpage => ({
+                ...fanpage,
+                id: fanpage.id || generateId(),
+                url: fanpage.url || '',
+                name: fanpage.name || '',
+                status: fanpage.status || 'pending',
+                thumbnail: fanpage.thumbnail || config.defaultImage,
+                description: fanpage.description || ''
+            }));
+        } else {
+            addLog('Không tìm thấy dữ liệu, sử dụng mặc định', 'warning');
+        }
+
+        updateCounters();
+        switchTab('all-link');
+        if (elements.mainContent) {
+            elements.mainContent.scrollTop = state.scrollPosition;
+        }
+    } catch (error) {
+        console.error('Lỗi tải dữ liệu:', error);
+        showToast('Không thể tải dữ liệu, sử dụng mặc định', 'danger');
+        state.links = [];
+        state.fanpages = [];
+        state.logs = [];
+        state.undoStack = [];
+        updateCounters();
+        switchTab('all-link');
+    } finally {
+        hideLoading();
+    }
+}
 // Utility Functions
 function generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
@@ -1918,7 +2112,7 @@ function showAddFanpageDialog() {
     // Xử lý chọn loại profile
     let selectedType = 'fanpage';
     dialog.querySelectorAll('.profile-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
+        btn.addEventListener('click', function () {
             dialog.querySelectorAll('.profile-btn').forEach(b => b.classList.remove('active'));
             this.classList.add('active');
             selectedType = this.dataset.type;
@@ -1926,21 +2120,21 @@ function showAddFanpageDialog() {
     });
 
     // Xử lý nút sửa tiêu đề
-    dialog.querySelector('#edit-title-btn').addEventListener('click', function() {
+    dialog.querySelector('#edit-title-btn').addEventListener('click', function () {
         const titleInput = dialog.querySelector('#fanpage-title');
         titleInput.focus();
     });
 
     // Xử lý thêm fanpage
-    dialog.querySelector('#confirm-add-fanpage').addEventListener('click', function() {
+    dialog.querySelector('#confirm-add-fanpage').addEventListener('click', function () {
         const url = dialog.querySelector('#fanpage-url').value.trim();
         const title = dialog.querySelector('#fanpage-title').value.trim();
-        
+
         if (!isValidUrl(url)) {
             showToast('URL không hợp lệ', 'warning');
             return;
         }
-        
+
         if (!title) {
             showToast('Vui lòng nhập tiêu đề', 'warning');
             return;
@@ -1965,11 +2159,11 @@ function showAddFanpageDialog() {
     });
 
     // Xử lý hủy
-    dialog.querySelector('#cancel-add-fanpage').addEventListener('click', function() {
+    dialog.querySelector('#cancel-add-fanpage').addEventListener('click', function () {
         document.body.removeChild(dialog);
     });
-    
-    dialog.querySelector('.modal-close').addEventListener('click', function() {
+
+    dialog.querySelector('.modal-close').addEventListener('click', function () {
         document.body.removeChild(dialog);
     });
 }
