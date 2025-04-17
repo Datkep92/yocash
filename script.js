@@ -1418,6 +1418,89 @@ function showAddLinkDialog() {
     cancelBtn.addEventListener('click', () => document.body.removeChild(dialog));
     closeBtn.addEventListener('click', () => document.body.removeChild(dialog));
 }
+async function importFromJSON() {
+    try {
+        state.isLoading = true;
+        showToast('Đang tải danh sách link từ Gist JSON...', 'info');
+
+        const gistApiUrl = 'https://api.github.com/gists/2cc79f453b3be62607c5ee8cb34e6cab';
+        const response = await fetch(gistApiUrl, { cache: 'no-cache' });
+        if (!response.ok) throw new Error(`Lỗi HTTP: ${response.status}`);
+
+        const gistData = await response.json();
+        const fileContent = gistData.files["gistfile1.txt"]?.content;
+
+        if (!fileContent) throw new Error("Không tìm thấy nội dung trong 'gistfile1.txt'");
+
+        let data;
+        try {
+            data = JSON.parse(fileContent);
+        } catch (e) {
+            throw new Error("Nội dung JSON không hợp lệ");
+        }
+
+        if (!Array.isArray(data)) throw new Error('Dữ liệu JSON không hợp lệ (phải là mảng object)');
+
+        const validLinks = data.filter(item =>
+            typeof item.url === 'string' &&
+            item.url.trim() !== ''
+        );
+
+        if (validLinks.length === 0) {
+            showToast('Không có link hợp lệ nào trong JSON', 'warning');
+            return;
+        }
+
+        if (!confirm(`Bạn có chắc muốn nhập ${validLinks.length} link từ Gist JSON?`)) {
+            showToast('Đã hủy nhập dữ liệu', 'warning');
+            return;
+        }
+
+        let addedCount = 0;
+        const newLinks = [];
+
+        validLinks.forEach(item => {
+            const trimmedUrl = item.url.trim();
+            const newLink = {
+                id: generateId(),
+                url: trimmedUrl,
+                title: item.title || 'Chưa xử lý',
+                description: item.description || 'Chưa có mô tả',
+                image: item.image || config.defaultImage,
+                status: item.status || 'pending',
+                post_type: item.post_type || determinePostType(trimmedUrl),
+                date: new Date().toISOString(),
+                checked: false,
+                blacklistStatus: 'active',
+                note: ''
+            };
+            state.links.unshift(newLink);
+            newLinks.push(newLink);
+            addedCount++;
+            addLog(`Đã thêm link mới từ Gist: ${trimmedUrl} (ID: ${newLink.id})`, 'success');
+        });
+
+        if (addedCount > 0) {
+            saveBackup('addLinks', { links: newLinks });
+            saveData({ links: true });
+            renderTabContent(state.currentTab);
+            updateCounters();
+            showToast(`Đã thêm ${addedCount} link từ Gist`, 'success');
+            addLog(`Đã nhập ${addedCount} link từ Gist JSON`, 'success');
+        } else {
+            showToast('Không có link nào được thêm', 'warning');
+        }
+    } catch (error) {
+        console.error('Lỗi khi nhập từ Gist:', error);
+        showToast(`Lỗi khi nhập từ Gist: ${error.message}`, 'danger');
+        addLog(`Lỗi nhập từ Gist: ${error.message}`, 'error');
+    } finally {
+        state.isLoading = false;
+    }
+}
+
+
+/*
 
 async function importFromJSON() {
     try {
@@ -1525,7 +1608,7 @@ async function importFromJSON() {
         state.isLoading = false;
     }
 }
-
+*/
 async function exportToGist() {
     try {
         const selectedLinks = state.links.filter(link => link.checked);
