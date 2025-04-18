@@ -11,56 +11,98 @@ const config = {
     toastDuration: 3000, // Thời gian hiển thị toast (ms)
     githubToken: localStorage.getItem('githubToken') || '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', // Token GitHub
     debounceDelay: 500, // Độ trễ debounce (ms)
-    apiGistPatchUrl: 'https://api.github.com/gists/8bb46f663b237c3e00736611aaf1c39e', // URL Gist API
-    fanpageGistUrl: 'https://api.github.com/gists/2cc79f453b3be62607c5ee8cb34e6cab', // Gist cho fanpage
+    fanpageGistUrl: 'https://api.github.com/gists/2cc79f453b3be62607c5ee8cb34e6cab', // Gist cho Jsonfanpage, Jsonalllink, Jsonlink
     backupUrl: 'http://127.0.0.1:10000', // URL WebDAV backup
     dataFile: '/var/mobile/new/data-fb.json', // File lưu trữ dữ liệu
     fanpagesPerPage: 20, // Số fanpage hiển thị mỗi trang
     maxRetries: 3, // Số lần thử lại
     retryDelay: 1000 // Delay giữa các lần thử lại (ms)
 };
-// Hàm fetch với retry
-async function fetchWithRetry(url, options = {}, retries = config.maxRetries, delay = config.retryDelay) {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-        try {
-            const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), config.requestTimeout);
-            const res = await fetch(url, { ...options, signal: controller.signal });
-            clearTimeout(id);
-            if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-            return res;
-        } catch (err) {
-            if (attempt === retries) {
-                try {
-                    const proxyRes = await fetch(`${config.corsProxy}${encodeURIComponent(url)}`, options);
-                    if (!proxyRes.ok) throw new Error(`Proxy HTTP ${proxyRes.status}`);
-                    return proxyRes;
-                } catch (proxyErr) {
-                    throw new Error(`Lỗi sau ${retries} lần thử: ${err.message}, Proxy: ${proxyErr.message}`);
-                }
-            }
-            await new Promise(resolve => setTimeout(resolve, delay * attempt));
-        }
-    }
-}
 
-// Kiểm tra token GitHub
-async function validateGithubToken(token) {
+async function importLinksFromJsonLines() {
     try {
-        const res = await fetchWithRetry('https://api.github.com/user', {
-            headers: { 'Authorization': `token ${token}` }
-        });
-        return res.ok;
-    } catch {
-        return false;
+        state.isLoading = true;
+        showToast('Đang tải danh sách link từ Jsonlink...', 'info');
+
+        // Sử dụng fetch thông thường
+        const response = await fetch(config.fanpageGistUrl, { cache: 'no-cache' });
+        if (!response.ok) throw new Error(`Lỗi HTTP: ${response.status}`);
+        const gistData = await response.json();
+        const fileContent = gistData.files["Jsonlink"]?.content;
+
+        if (!fileContent) throw new Error("Không tìm thấy nội dung trong 'Jsonlink'");
+
+        const items = fileContent
+            .split('\n')
+            .map(line => {
+                try {
+                    return JSON.parse(line);
+                } catch {
+                    return null;
+                }
+            })
+            .filter(item => item && isValidUrl(item.url) && item.image && item.image.trim() !== '');
+
+        if (items.length === 0) {
+            showToast('Không có dòng JSON hợp lệ hoặc thiếu ảnh trong Jsonlink', 'warning');
+            return;
+        }
+
+        if (!confirm(`Bạn có chắc muốn nhập ${items.length} link từ Jsonlink?`)) {
+            showToast('Đã hủy nhập dữ liệu', 'warning');
+            return;
+        }
+
+        let addedCount = 0;
+        const newLinks = [];
+        for (const item of items) {
+            const url = item.url;
+            // Kiểm tra xem image có phải là icon-loi.jpg không
+            const isErrorImage = item.image === 'https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg';
+
+            const newLink = {
+                id: generateId(),
+                url,
+                title: isErrorImage ? 'Cần login để hiển thị' : (item.title || 'Chưa xử lý'),
+                description: isErrorImage ? 'Yêu cầu đăng nhập bằng token' : (item.description || ''),
+                image: item.image,
+                status: isErrorImage ? 'login' : 'success',
+                post_type: item.post_type || determinePostType(url),
+                date: new Date().toISOString(),
+                checked: item.checked || false,
+                blacklistStatus: item.blacklistStatus || 'active',
+                note: item.note || ''
+            };
+
+            state.links.unshift(newLink);
+            newLinks.push(newLink);
+            addedCount++;
+            addLog(`Đã thêm link từ Jsonlink: ${url} (ID: ${newLink.id}, Status: ${newLink.status})`, 'success');
+        }
+
+        if (addedCount > 0) {
+            saveBackup('addLinks', { links: newLinks });
+            await saveData({ links: true });
+            renderTabContent('all-link');
+            updateCounters();
+            showToast(`Đã thêm ${addedCount} link từ Jsonlink`, 'success');
+            addLog(`Đã nhập ${addedCount} link từ Jsonlink`, 'success');
+        } else {
+            showToast('Không có link nào được thêm', 'warning');
+        }
+    } catch (error) {
+        console.error('Lỗi khi nhập link từ Jsonlink:', error);
+        showToast(`Lỗi khi nhập từ Jsonlink: ${error.message}`, 'danger');
+        addLog(`Lỗi nhập link từ Jsonlink: ${error.message}`, 'error');
+    } finally {
+        state.isLoading = false;
     }
 }
 
-// Nhập fanpage từ JSON
 async function importFromJSON() {
     try {
         state.isLoading = true;
-        showToast('Đang tải danh sách link từ Gist JSON...', 'info');
+        showToast('Đang tải danh sách link từ Jsonalllink...', 'info');
 
         const gistApiUrl = 'https://api.github.com/gists/2cc79f453b3be62607c5ee8cb34e6cab';
         const response = await fetch(gistApiUrl, { cache: 'no-cache' });
@@ -82,83 +124,89 @@ async function importFromJSON() {
 
         const validLinks = data.filter(item =>
             typeof item.url === 'string' &&
-            item.url.trim() !== ''
+            item.url.trim() !== '' &&
+            item.image &&
+            item.image.trim() !== ''
         );
 
         if (validLinks.length === 0) {
-            showToast('Không có link hợp lệ nào trong JSON', 'warning');
+            showToast('Không có link hợp lệ hoặc thiếu ảnh trong JSON', 'warning');
             return;
         }
 
-        if (!confirm(`Bạn có chắc muốn nhập ${validLinks.length} link từ Gist JSON?`)) {
+        if (!confirm(`Bạn có chắc muốn nhập ${validLinks.length} link từ Jsonalllink?`)) {
             showToast('Đã hủy nhập dữ liệu', 'warning');
             return;
         }
 
         let addedCount = 0;
         const newLinks = [];
-
-        validLinks.forEach(item => {
+        for (const item of validLinks) {
             const trimmedUrl = item.url.trim();
+            // Kiểm tra xem image có phải là icon-loi.jpg không
+            const isErrorImage = item.image === 'https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg';
+
             const newLink = {
                 id: generateId(),
                 url: trimmedUrl,
-                title: item.title || 'Chưa xử lý',
-                description: item.description || 'Chưa có mô tả',
-                image: item.image || config.defaultImage,
-                status: item.status || 'pending',
+                title: isErrorImage ? 'Cần login để hiển thị' : (item.title || 'Chưa xử lý'),
+                description: isErrorImage ? 'Yêu cầu đăng nhập bằng token' : (item.description || ''),
+                image: item.image,
+                status: isErrorImage ? 'login' : 'success',
                 post_type: item.post_type || determinePostType(trimmedUrl),
                 date: new Date().toISOString(),
-                checked: false,
-                blacklistStatus: 'active',
-                note: ''
+                checked: item.checked || false,
+                blacklistStatus: item.blacklistStatus || 'active',
+                note: item.note || ''
             };
             state.links.unshift(newLink);
             newLinks.push(newLink);
             addedCount++;
-            addLog(`Đã thêm link mới từ Gist: ${trimmedUrl} (ID: ${newLink.id})`, 'success');
-        });
+            addLog(`Đã thêm link từ Jsonalllink: ${trimmedUrl} (ID: ${newLink.id}, Status: ${newLink.status})`, 'success');
+        }
 
         if (addedCount > 0) {
             saveBackup('addLinks', { links: newLinks });
-            saveData({ links: true });
-            renderTabContent(state.currentTab);
+            await saveData({ links: true });
+            renderTabContent('all-link');
             updateCounters();
-            showToast(`Đã thêm ${addedCount} link từ Gist`, 'success');
-            addLog(`Đã nhập ${addedCount} link từ Gist JSON`, 'success');
+            showToast(`Đã thêm ${addedCount} link từ Jsonalllink`, 'success');
+            addLog(`Đã nhập ${addedCount} link từ Jsonalllink`, 'success');
         } else {
             showToast('Không có link nào được thêm', 'warning');
         }
     } catch (error) {
-        console.error('Lỗi khi nhập từ Gist:', error);
-        showToast(`Lỗi khi nhập từ Gist: ${error.message}`, 'danger');
-        addLog(`Lỗi nhập từ Gist: ${error.message}`, 'error');
+        console.error('Lỗi khi nhập từ Jsonalllink:', error);
+        showToast(`Lỗi khi nhập từ Jsonalllink: ${error.message}`, 'danger');
+        addLog(`Lỗi nhập từ Jsonalllink: ${error.message}`, 'error');
     } finally {
         state.isLoading = false;
     }
 }
-
-// Xuất fanpage ra JSON
-async function exportFanpagesToJSON(fanpagesToExport = state.fanpages) {
+// Xuất link ra Gist (Jsonalllink)
+async function exportToGist() {
     try {
-        if (fanpagesToExport.length === 0) {
-            showToast('Không có fanpage nào để xuất!', 'warning');
+        const selectedLinks = state.links.filter(link => link.checked);
+        const linksToExport = selectedLinks.length > 0 ? selectedLinks : state.links;
+        if (linksToExport.length === 0) {
+            showToast('Không có link nào để xuất!', 'warning');
             return;
         }
 
         const token = config.githubToken;
-        if (!token || token === 'YOUR_GITHUB_TOKEN_HERE') {
+        if (!token) {
             showToast('Vui lòng cung cấp token GitHub hợp lệ', 'danger');
+            addLog('Lỗi: Thiếu token GitHub để xuất Jsonalllink', 'error');
             return;
         }
 
         if (!(await validateGithubToken(token))) {
             showToast('Token GitHub không hợp lệ', 'danger');
-            addLog('Lỗi: Token GitHub không hợp lệ', 'error');
+            addLog('Lỗi: Token GitHub không hợp lệ để xuất Jsonalllink', 'error');
             return;
         }
 
-        const content = JSON.stringify(fanpagesToExport, null, 2);
+        const content = JSON.stringify(linksToExport, null, 2);
         const response = await fetchWithRetry(config.fanpageGistUrl, {
             method: 'PATCH',
             headers: {
@@ -167,7 +215,7 @@ async function exportFanpagesToJSON(fanpagesToExport = state.fanpages) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                files: { 'Jsonfanpage': { content } }
+                files: { 'Jsonalllink': { content } }
             })
         });
 
@@ -175,14 +223,14 @@ async function exportFanpagesToJSON(fanpagesToExport = state.fanpages) {
             const retryAfter = response.headers.get('Retry-After') || 60;
             showToast(`Quá nhiều yêu cầu, thử lại sau ${retryAfter}s`, 'warning');
             await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
-            return exportFanpagesToJSON(fanpagesToExport);
+            return exportToGist();
         }
 
-        showToast(`Đã xuất ${fanpagesToExport.length} fanpage lên Gist`, 'success');
-        addLog(`Đã xuất ${fanpagesToExport.length} fanpage lên Gist`, 'success');
+        showToast(`Đã xuất ${linksToExport.length} link lên Jsonalllink`, 'success');
+        addLog(`Đã xuất ${linksToExport.length} link lên Jsonalllink`, 'success');
     } catch (error) {
-        showToast(`Lỗi khi xuất fanpage lên Gist: ${error.message}`, 'danger');
-        addLog(`Lỗi xuất fanpage lên Gist: ${error.message}`, 'error');
+        showToast(`Lỗi khi xuất lên Jsonalllink: ${error.message}`, 'danger');
+        addLog(`Lỗi xuất lên Jsonalllink: ${error.message}`, 'error');
     }
 }
 // Trạng thái ứng dụng
@@ -1016,6 +1064,196 @@ function renderLinks(tab) {
     container.appendChild(fragment);
     updateCounters();
 }
+function showLinkDetailsPopup(link) {
+    // Tạo div fb-root nếu chưa có
+    if (!document.getElementById('fb-root')) {
+        const fbRoot = document.createElement('div');
+        fbRoot.id = 'fb-root';
+        document.body.appendChild(fbRoot);
+    }
+
+    // Tải Facebook SDK nếu chưa có
+    if (!document.querySelector('script[src*="connect.facebook.net"]')) {
+        const script = document.createElement('script');
+        script.async = true;
+        script.defer = true;
+        script.crossOrigin = 'anonymous';
+        script.src = 'https://connect.facebook.net/vi_VN/sdk.js#xfbml=1&version=v22.0&appId=223554142245885';
+        document.body.appendChild(script);
+    }
+
+    const popup = document.createElement('div');
+    popup.className = 'modal-overlay';
+    popup.innerHTML = `
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>Chi tiết bài viết</h3>
+                <button class="modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="fb-post-wrapper">
+                    <div class="fb-post-container">
+                        <div class="fb-post" data-href="${link.url}" data-width="100%" data-show-text="true"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="close-popup" class="btn btn-secondary">Đóng</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(popup);
+
+    // CSS cho popup
+    const style = document.createElement('style');
+    style.textContent = `
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-dialog {
+            background: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 95vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+        .modal-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        .modal-header h3 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 500;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            color: #666;
+        }
+        .modal-close:hover {
+            color: #333;
+        }
+        .modal-body {
+            padding: 20px;
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        .fb-post-wrapper {
+            width: 100%;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            overflow: visible;
+        }
+        .fb-post-container {
+            width: 100%;
+            transform-origin: top left; /* Thu phóng từ góc trên bên trái */
+        }
+        .fb-post {
+            min-height: 300px; /* Chiều cao tối thiểu để tránh lỗi render */
+        }
+        .modal-footer {
+            padding: 15px 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            justify-content: flex-end;
+            flex-shrink: 0;
+        }
+        .btn {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .btn-secondary {
+            background: #f0f2f5;
+            color: #333;
+        }
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+    `;
+    popup.appendChild(style);
+
+    // Hàm tính toán và áp dụng thu phóng
+    const applyScaling = () => {
+        const fbPostContainer = popup.querySelector('.fb-post-container');
+        const modalBody = popup.querySelector('.modal-body');
+        const fbPost = popup.querySelector('.fb-post');
+
+        // Đợi nội dung render xong
+        setTimeout(() => {
+            // Lấy chiều cao thực tế của bài viết
+            const postHeight = fbPost.scrollHeight;
+            // Lấy chiều cao khả dụng của modal-body (trừ header và footer)
+            const modalBodyHeight = modalBody.clientHeight;
+
+            // Nếu bài viết dài hơn chiều cao khả dụng, thu nhỏ
+            if (postHeight > modalBodyHeight) {
+                const scaleRatio = (modalBodyHeight - 20) / postHeight; // Trừ 20px để có không gian đệm
+                fbPostContainer.style.transform = `scale(${scaleRatio})`;
+                fbPostContainer.style.width = `${100 / scaleRatio}%`; // Điều chỉnh chiều rộng để tránh bị cắt
+            } else {
+                fbPostContainer.style.transform = 'scale(1)';
+                fbPostContainer.style.width = '100%';
+            }
+        }, 2000); // Đợi 2 giây để đảm bảo nội dung render xong
+    };
+
+    // Khởi tạo lại FB.XFBML.parse() để render bài viết
+    const renderPost = () => {
+        if (window.FB) {
+            window.FB.XFBML.parse(popup);
+            applyScaling();
+        } else {
+            window.fbAsyncInit = function () {
+                FB.init({
+                    appId: '223554142245885',
+                    xfbml: true,
+                    version: 'v22.0'
+                });
+                FB.XFBML.parse(popup);
+                applyScaling();
+            };
+        }
+    };
+
+    // Thử render lại nhiều lần để đảm bảo nội dung được hiển thị đầy đủ
+    renderPost();
+    setTimeout(renderPost, 1000); // Thử lại sau 1 giây
+    setTimeout(renderPost, 3000); // Thử lại sau 3 giây
+
+    // Sự kiện đóng popup
+    const closeBtn = popup.querySelector('#close-popup');
+    const modalCloseBtn = popup.querySelector('.modal-close');
+    const closePopup = () => document.body.removeChild(popup);
+    closeBtn.addEventListener('click', closePopup);
+    modalCloseBtn.addEventListener('click', closePopup);
+
+    // Ghi log hành động
+    addLog(`Hiển thị bài viết fb-post cho link: ${link.url}`, 'info');
+}
 
 function createLinkItem(link, index) {
     const item = document.createElement('div');
@@ -1052,7 +1290,7 @@ function createLinkItem(link, index) {
                     </div>
                 </div>
                 <div class="link-actions">
-                    <button class="action-btn reset" title="Reset"><i class="fas fa-redo"></i></button>
+                    <button class="action-btn view-details" title="Xem bài viết"><i class="fas fa-eye"></i></button>
                     <button class="action-btn note" title="Ghi chú"><i class="fas fa-comment-alt"></i></button>
                     ${link.blacklistStatus === 'active' ? `<button class="action-btn block" title="Chặn"><i class="fas fa-ban"></i></button>` : `<button class="action-btn unblock" title="Khôi phục"><i class="fas fa-undo"></i></button>`}
                 </div>
@@ -1067,11 +1305,9 @@ function createLinkItem(link, index) {
     item.querySelector('.link-content').addEventListener('click', (e) => {
         e.stopPropagation();
         if (!link.checked) {
-            // Nếu checkbox chưa được chọn: Bật checkbox và mở URL
             toggleCheckbox(link);
             window.open(link.url, '_blank');
         } else {
-            // Nếu checkbox đã được chọn: Tắt checkbox
             toggleCheckbox(link);
         }
     });
@@ -1086,7 +1322,7 @@ function createLinkItem(link, index) {
             addLog(`Đã xóa link ${link.url} (ID: ${link.id})`, 'info');
         }
     });
-    item.querySelector('.reset').addEventListener('click', () => retryLink(link.id));
+    item.querySelector('.view-details').addEventListener('click', () => showLinkDetailsPopup(link));
     item.querySelector('.note').addEventListener('click', () => showNoteDialog(link));
     item.querySelector('.block')?.addEventListener('click', () => {
         saveBackup('blacklist', { linkId: link.id, blacklistStatus: link.blacklistStatus });
@@ -1271,34 +1507,58 @@ function toggleCheckbox(link) {
 }
 
 function toggleSelectAll() {
-    const linksToToggle = getLinksForCurrentTab();
-    const allChecked = linksToToggle.every(l => l.checked);
+    if (state.currentTab === 'fanpage') {
+        const fanpagesToToggle = getFilteredFanpages(currentFilter);
+        const allChecked = fanpagesToToggle.every(f => f.checked);
 
-    saveBackup('selectAll', { links: linksToToggle });
-    linksToToggle.forEach(l => l.checked = !allChecked);
-    saveData({ links: true });
-    renderTabContent(state.currentTab);
-    updateCounters();
-    addLog(`Đã ${allChecked ? 'bỏ chọn' : 'chọn'} tất cả ${linksToToggle.length} link trong tab ${state.currentTab}`, 'info');
+        saveBackup('selectAllFanpages', { fanpages: fanpagesToToggle });
+        fanpagesToToggle.forEach(f => f.checked = !allChecked);
 
-    if (!allChecked && linksToToggle.length > 0) {
-        const dialog = document.createElement('div');
-        dialog.className = 'modal-overlay';
-        dialog.innerHTML = `
+        saveData({ fanpages: true });
+        renderFanpageTab();
+        updateCounters();
+
+        showToast(`Đã ${allChecked ? 'bỏ chọn' : 'chọn'} tất cả ${fanpagesToToggle.length} fanpage`, 'info');
+        addLog(`Đã ${allChecked ? 'bỏ chọn' : 'chọn'} tất cả ${fanpagesToToggle.length} fanpage`, 'info');
+    } else {
+        // Phần xử lý cho các tab khác giữ nguyên
+        const linksToToggle = getLinksForCurrentTab();
+        const allChecked = linksToToggle.every(l => l.checked);
+
+        saveBackup('selectAll', { links: linksToToggle });
+        linksToToggle.forEach(l => l.checked = !allChecked);
+        saveData({ links: true });
+        renderTabContent(state.currentTab);
+        updateCounters();
+        addLog(`Đã ${allChecked ? 'bỏ chọn' : 'chọn'} tất cả ${linksToToggle.length} link trong tab ${state.currentTab}`, 'info');
+
+        if (!allChecked && linksToToggle.length > 0) {
+            // Hiển thị dialog cho các hành động
+            showSelectionActionsDialog(linksToToggle.length);
+        }
+    }
+}
+
+function showSelectionActionsDialog(count) {
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-overlay';
+    dialog.innerHTML = `
         <div class="modal-dialog">
             <div class="modal-header">
-                <h3>Đã chọn ${linksToToggle.length} link</h3>
+                <h3>Đã chọn ${count} mục</h3>
                 <button class="modal-close">×</button>
             </div>
             <div class="modal-body">
-                <div style="display: flex; justify-content: space-between; gap: 10px;">
-                    <button id="delete-selected" class="btn btn-danger" style="flex: 1;">
+                <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                    <button id="delete-selected" class="btn btn-danger">
                         <i class="fas fa-trash"></i> Xóa
                     </button>
-                    <button id="export-gist" class="btn btn-primary" style="flex: 1;">
+                    ${state.currentTab !== 'fanpage' ? `
+                    <button id="export-gist" class="btn btn-primary">
                         <i class="fas fa-code-branch"></i> Xuất Gist
                     </button>
-                    <button id="unselect-all" class="btn btn-secondary" style="flex: 1;">
+                    ` : ''}
+                    <button id="unselect-all" class="btn btn-secondary">
                         <i class="fas fa-times"></i> Bỏ chọn tất cả
                     </button>
                 </div>
@@ -1306,27 +1566,41 @@ function toggleSelectAll() {
         </div>
     `;
 
-        document.body.appendChild(dialog);
+    document.body.appendChild(dialog);
 
-        dialog.querySelector('#delete-selected').addEventListener('click', () => {
+    dialog.querySelector('#delete-selected').addEventListener('click', () => {
+        if (state.currentTab === 'fanpage') {
+            deleteSelectedFanpages();
+        } else {
             deleteSelected();
-            document.body.removeChild(dialog);
-        });
+        }
+        document.body.removeChild(dialog);
+    });
+
+    if (state.currentTab !== 'fanpage') {
         dialog.querySelector('#export-gist').addEventListener('click', () => {
             exportToGist();
             document.body.removeChild(dialog);
         });
-        dialog.querySelector('#unselect-all').addEventListener('click', () => {
-            saveBackup('selectAll', { links: linksToToggle });
-            linksToToggle.forEach(l => l.checked = false);
-            saveData({ links: true });
-            renderTabContent(state.currentTab);
-            updateCounters();
-            addLog(`Đã bỏ chọn tất cả ${linksToToggle.length} link`, 'info');
-            document.body.removeChild(dialog);
-        });
-        dialog.querySelector('.modal-close').addEventListener('click', () => document.body.removeChild(dialog));
     }
+
+    dialog.querySelector('#unselect-all').addEventListener('click', () => {
+        if (state.currentTab === 'fanpage') {
+            const fanpages = getFilteredFanpages(currentFilter);
+            fanpages.forEach(f => f.checked = false);
+            saveData({ fanpages: true });
+        } else {
+            const links = getLinksForCurrentTab();
+            links.forEach(l => l.checked = false);
+            saveData({ links: true });
+        }
+        renderTabContent(state.currentTab);
+        document.body.removeChild(dialog);
+    });
+
+    dialog.querySelector('.modal-close').addEventListener('click', () => {
+        document.body.removeChild(dialog);
+    });
 }
 
 function showNoteDialog(link) {
@@ -1380,7 +1654,8 @@ function showAddLinkDialog() {
             <div class="modal-body">
                 <textarea id="new-links-input" placeholder="Nhập danh sách URL (mỗi URL trên một dòng)..." style="width: 100%; height: 150px; padding: 8px; border-radius: 4px; border: 1px solid #ddd;"></textarea>
                 <div style="display: flex; justify-content: space-between; margin-top: 10px; gap: 10px;">
-                    <button id="import-json-in-dialog" class="btn btn-secondary" style="flex: 1;"><i class="fas fa-file-import"></i> Nhập JSON</button>
+                    <button id="import-json-lines" class="btn btn-secondary" style="flex: 1;"><i class="fas fa-file-import"></i> Nhập JSON từng dòng</button>
+                    <button id="import-json-array" class="btn btn-secondary" style="flex: 1;"><i class="fas fa-file-import"></i> Nhập JSON mảng</button>
                     <button id="add-links-confirm" class="btn btn-primary" style="flex: 1;">Thêm</button>
                     <button id="add-links-cancel" class="btn btn-secondary" style="flex: 1;">Hủy</button>
                 </div>
@@ -1394,7 +1669,8 @@ function showAddLinkDialog() {
     const confirmBtn = dialog.querySelector('#add-links-confirm');
     const cancelBtn = dialog.querySelector('#add-links-cancel');
     const closeBtn = dialog.querySelector('.modal-close');
-    const importJsonBtn = dialog.querySelector('#import-json-in-dialog');
+    const importJsonLinesBtn = dialog.querySelector('#import-json-lines');
+    const importJsonArrayBtn = dialog.querySelector('#import-json-array');
 
     confirmBtn.addEventListener('click', () => {
         const urls = textarea.value.trim().split('\n').map(url => url.trim()).filter(url => url);
@@ -1445,7 +1721,12 @@ function showAddLinkDialog() {
         document.body.removeChild(dialog);
     });
 
-    importJsonBtn.addEventListener('click', () => {
+    importJsonLinesBtn.addEventListener('click', () => {
+        importLinksFromJsonLines();
+        document.body.removeChild(dialog);
+    });
+
+    importJsonArrayBtn.addEventListener('click', () => {
         importFromJSON();
         document.body.removeChild(dialog);
     });
@@ -1454,86 +1735,6 @@ function showAddLinkDialog() {
     closeBtn.addEventListener('click', () => document.body.removeChild(dialog));
 }
 
-async function importFromJSON() {
-    try {
-        state.isLoading = true;
-        showToast('Đang tải danh sách link từ Gist JSON...', 'info');
-
-        const gistApiUrl = 'https://api.github.com/gists/2cc79f453b3be62607c5ee8cb34e6cab';
-        const response = await fetch(gistApiUrl, { cache: 'no-cache' });
-        if (!response.ok) throw new Error(`Lỗi HTTP: ${response.status}`);
-
-        const gistData = await response.json();
-        const fileContent = gistData.files["Jsonalllink"]?.content;
-
-        if (!fileContent) throw new Error("Không tìm thấy nội dung trong 'Jsonalllink'");
-
-        let data;
-        try {
-            data = JSON.parse(fileContent);
-        } catch (e) {
-            throw new Error("Nội dung JSON không hợp lệ");
-        }
-
-        if (!Array.isArray(data)) throw new Error('Dữ liệu JSON không hợp lệ (phải là mảng object)');
-
-        const validLinks = data.filter(item =>
-            typeof item.url === 'string' &&
-            item.url.trim() !== ''
-        );
-
-        if (validLinks.length === 0) {
-            showToast('Không có link hợp lệ nào trong JSON', 'warning');
-            return;
-        }
-
-        if (!confirm(`Bạn có chắc muốn nhập ${validLinks.length} link từ Gist JSON?`)) {
-            showToast('Đã hủy nhập dữ liệu', 'warning');
-            return;
-        }
-
-        let addedCount = 0;
-        const newLinks = [];
-
-        validLinks.forEach(item => {
-            const trimmedUrl = item.url.trim();
-            const newLink = {
-                id: generateId(),
-                url: trimmedUrl,
-                title: item.title || 'Chưa xử lý',
-                description: item.description || 'Chưa có mô tả',
-                image: item.image || config.defaultImage,
-                status: item.status || 'pending',
-                post_type: item.post_type || determinePostType(trimmedUrl),
-                date: new Date().toISOString(),
-                checked: false,
-                blacklistStatus: 'active',
-                note: ''
-            };
-            state.links.unshift(newLink);
-            newLinks.push(newLink);
-            addedCount++;
-            addLog(`Đã thêm link mới từ Gist: ${trimmedUrl} (ID: ${newLink.id})`, 'success');
-        });
-
-        if (addedCount > 0) {
-            saveBackup('addLinks', { links: newLinks });
-            saveData({ links: true });
-            renderTabContent(state.currentTab);
-            updateCounters();
-            showToast(`Đã thêm ${addedCount} link từ Gist`, 'success');
-            addLog(`Đã nhập ${addedCount} link từ Gist JSON`, 'success');
-        } else {
-            showToast('Không có link nào được thêm', 'warning');
-        }
-    } catch (error) {
-        console.error('Lỗi khi nhập từ Gist:', error);
-        showToast(`Lỗi khi nhập từ Gist: ${error.message}`, 'danger');
-        addLog(`Lỗi nhập từ Gist: ${error.message}`, 'error');
-    } finally {
-        state.isLoading = false;
-    }
-}
 
 
 
@@ -1645,36 +1846,9 @@ async function importFromJSON() {
         state.isLoading = false;
     }
 }
-
 */
-async function exportToGist() {
-    try {
-        const selectedLinks = state.links.filter(link => link.checked);
-        if (selectedLinks.length === 0) {
-            showToast('Không có link nào được chọn để xuất!', 'warning');
-            return;
-        }
 
-        const content = selectedLinks.map(link => link.url).join('\n');
-        const response = await fetch(config.apiGistPatchUrl, {
-            method: 'PATCH',
-            headers: {
-                'Authorization': `token ${config.githubToken}`,
-                'Accept': 'application/vnd.github+json'
-            },
-            body: JSON.stringify({
-                files: { 'Textlink': { content } }
-            })
-        });
 
-        if (!response.ok) throw new Error('Lỗi từ GitHub API');
-        showToast(`Đã xuất ${selectedLinks.length} link lên Gist`, 'success');
-        addLog(`Đã xuất ${selectedLinks.length} link lên Gist`, 'success');
-    } catch (error) {
-        showToast('Lỗi khi xuất lên Gist!', 'danger');
-        addLog(`Lỗi khi xuất lên Gist: ${error.message}`, 'error');
-    }
-}
 
 function deleteSelected() {
     const selectedLinks = getLinksForCurrentTab().filter(link => link.checked);
@@ -1863,7 +2037,26 @@ async function extractContent(url) {
         renderTabContent(state.currentTab);
     }
 }
+function deleteSelectedFanpages() {
+    const selectedFanpages = state.fanpages.filter(f => f.checked);
+    if (selectedFanpages.length === 0) {
+        showToast('Không có fanpage nào được chọn', 'warning');
+        return;
+    }
 
+    if (confirm(`Bạn có chắc muốn xóa ${selectedFanpages.length} fanpage đã chọn?`)) {
+        saveBackup('deleteFanpages', { fanpages: [...selectedFanpages] });
+        state.fanpages = state.fanpages.filter(f => !f.checked);
+
+        // Reset tất cả checkbox
+        state.fanpages.forEach(f => f.checked = false);
+
+        saveData({ fanpages: true });
+        renderFanpageTab();
+        showToast(`Đã xóa ${selectedFanpages.length} fanpage`, 'success');
+        addLog(`Đã xóa ${selectedFanpages.length} fanpage`, 'info');
+    }
+}
 // Event Listeners
 function setupEventListeners() {
     console.log('Setting up event listeners');
@@ -1900,7 +2093,15 @@ function setupEventListeners() {
                 break;
         }
     });
-
+    if (elements.headerBtns.delete) {
+        elements.headerBtns.delete.addEventListener('click', () => {
+            if (state.currentTab === 'fanpage') {
+                deleteSelectedFanpages();
+            } else {
+                deleteSelected();
+            }
+        });
+    }
     if (elements.statusCounters.all?.parentElement) {
         elements.statusCounters.all.parentElement.addEventListener('click', () => switchTab('all-link'));
     }
@@ -2060,6 +2261,123 @@ function deleteFanpage(fanpageId) {
 function isFanpageExists(url) {
     const baseUrl = url.split('?')[0];
     return state.fanpages.some(fanpage => fanpage.url.split('?')[0] === baseUrl);
+}
+
+
+function refreshFanpage(fanpageId) {
+    const fanpage = state.fanpages.find(f => f.id === fanpageId);
+    if (!fanpage) return;
+
+    saveBackup('refreshFanpage', { fanpage: { ...fanpage } });
+    fanpage.status = 'pending';
+    fanpage.lastChecked = null;
+    saveData({ fanpages: true });
+    renderTabContent('fanpage');
+    addLog(`Làm mới fanpage: ${fanpage.name}`, 'info');
+}
+
+function getStatusText(status) {
+    const statusMap = {
+        'exists': '✓ Tồn tại',
+        'not-exists': '✗ Không tồn tại',
+        'restricted': '⛔ Bị chặn',
+        'pending': '⌛ Đang kiểm tra',
+        'error': '⚠ Lỗi'
+    };
+    return statusMap[status] || '? Không xác định';
+}
+
+// Thay thế verifyFanpageExistence, updateFanpageStatus, checkFanpageStatus bằng hàm mới
+async function verifyFanpage(fanpage, container) {
+    const iframe = container.querySelector('iframe');
+    let status = 'error';
+
+    if (iframe) {
+        try {
+            // Phát hiện nội dung bị chặn/xóa
+            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+            if (iframeDoc.body.innerText.includes('content not found')) {
+                status = 'not-exists';
+            } else if (iframeDoc.body.innerText.includes('restricted') ||
+                iframeDoc.body.innerText.includes('log in')) {
+                status = 'restricted';
+            } else {
+                status = 'exists';
+            }
+        } catch (e) {
+            status = 'exists'; // Giả định tồn tại nếu có iframe
+        }
+    }
+
+    // Cập nhật trạng thái
+    fanpage.status = status;
+    fanpage.lastChecked = new Date().toISOString();
+    saveData({ fanpages: true });
+
+    // Cập nhật giao diện
+    const statusElement = container.querySelector('.fanpage-status');
+    if (statusElement) {
+        statusElement.className = `fanpage-status ${status}`;
+        statusElement.textContent = getStatusText(status);
+    }
+}
+
+
+
+function forceCheckFanpage(fanpageId, itemElement) {
+    const fanpage = state.fanpages.find(f => f.id === fanpageId);
+    if (!fanpage) return;
+
+    // Reset trạng thái
+    fanpage.status = 'pending';
+    fanpage.lastChecked = null;
+    saveData({ fanpages: true });
+
+    // Hiển thị loading
+    const statusElement = itemElement.querySelector('.fanpage-status-overlay');
+    statusElement.className = 'fanpage-status-overlay pending';
+    statusElement.textContent = '⌛ Đang kiểm tra...';
+
+    // Tải lại iframe
+    const iframeContainer = itemElement.querySelector('.fanpage-iframe-container');
+    iframeContainer.innerHTML = '';
+    iframeContainer.dataset.loaded = 'false';
+    loadFanpageIframe(fanpage, iframeContainer);
+}
+
+function loadFanpageIframe(fanpage, container) {
+    if (fanpage.status !== 'pending' && fanpage.lastChecked) return;
+
+    container.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Đang tải...</div>';
+
+    // Sử dụng Facebook SDK nếu có
+    if (window.FB) {
+        container.innerHTML = `
+            <div class="fb-post" 
+                 data-href="${fanpage.url}" 
+                 data-width="300"
+                 data-show-text="true"
+                 data-lazy="true"></div>
+        `;
+        window.FB.XFBML.parse(container);
+    } else {
+        // Fallback sử dụng iframe thông thường
+        container.innerHTML = `
+            <iframe src="https://www.facebook.com/plugins/post.php?href=${encodeURIComponent(fanpage.url)}&width=300&show_text=true" 
+                    width="300" height="200" 
+                    style="border:none;overflow:hidden" 
+                    scrolling="no" 
+                    frameborder="0" 
+                    allowfullscreen="true"></iframe>
+        `;
+    }
+
+    // Cập nhật trạng thái sau khi tải
+    setTimeout(() => {
+        fanpage.status = 'exists'; // Giả định tải thành công
+        fanpage.lastChecked = new Date().toISOString();
+        saveData({ fanpages: true });
+    }, 2000);
 }
 
 // Sửa đổi showAddFanpageDialog để thêm mục Nhập
@@ -2255,125 +2573,8 @@ function showAddFanpageDialog() {
     });
 }
 
-
-
-function refreshFanpage(fanpageId) {
-    const fanpage = state.fanpages.find(f => f.id === fanpageId);
-    if (!fanpage) return;
-
-    saveBackup('refreshFanpage', { fanpage: { ...fanpage } });
-    fanpage.status = 'pending';
-    fanpage.lastChecked = null;
-    saveData({ fanpages: true });
-    renderTabContent('fanpage');
-    addLog(`Làm mới fanpage: ${fanpage.name}`, 'info');
-}
-
-function getStatusText(status) {
-    const statusMap = {
-        'exists': '✓ Tồn tại',
-        'not-exists': '✗ Không tồn tại',
-        'restricted': '⛔ Bị chặn',
-        'pending': '⌛ Đang kiểm tra',
-        'error': '⚠ Lỗi'
-    };
-    return statusMap[status] || '? Không xác định';
-}
-
-// Thay thế verifyFanpageExistence, updateFanpageStatus, checkFanpageStatus bằng hàm mới
-async function verifyFanpage(fanpage, container) {
-    const iframe = container.querySelector('iframe');
-    let status = 'error';
-
-    if (iframe) {
-        try {
-            // Phát hiện nội dung bị chặn/xóa
-            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-            if (iframeDoc.body.innerText.includes('content not found')) {
-                status = 'not-exists';
-            } else if (iframeDoc.body.innerText.includes('restricted') ||
-                iframeDoc.body.innerText.includes('log in')) {
-                status = 'restricted';
-            } else {
-                status = 'exists';
-            }
-        } catch (e) {
-            status = 'exists'; // Giả định tồn tại nếu có iframe
-        }
-    }
-
-    // Cập nhật trạng thái
-    fanpage.status = status;
-    fanpage.lastChecked = new Date().toISOString();
-    saveData({ fanpages: true });
-
-    // Cập nhật giao diện
-    const statusElement = container.querySelector('.fanpage-status');
-    if (statusElement) {
-        statusElement.className = `fanpage-status ${status}`;
-        statusElement.textContent = getStatusText(status);
-    }
-}
-
-
-
-function forceCheckFanpage(fanpageId, itemElement) {
-    const fanpage = state.fanpages.find(f => f.id === fanpageId);
-    if (!fanpage) return;
-
-    // Reset trạng thái
-    fanpage.status = 'pending';
-    fanpage.lastChecked = null;
-    saveData({ fanpages: true });
-
-    // Hiển thị loading
-    const statusElement = itemElement.querySelector('.fanpage-status-overlay');
-    statusElement.className = 'fanpage-status-overlay pending';
-    statusElement.textContent = '⌛ Đang kiểm tra...';
-
-    // Tải lại iframe
-    const iframeContainer = itemElement.querySelector('.fanpage-iframe-container');
-    iframeContainer.innerHTML = '';
-    iframeContainer.dataset.loaded = 'false';
-    loadFanpageIframe(fanpage, iframeContainer);
-}
-
-function loadFanpageIframe(fanpage, container) {
-    if (fanpage.status !== 'pending' && fanpage.lastChecked) return;
-
-    container.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Đang tải...</div>';
-
-    // Sử dụng Facebook SDK nếu có
-    if (window.FB) {
-        container.innerHTML = `
-            <div class="fb-post" 
-                 data-href="${fanpage.url}" 
-                 data-width="300"
-                 data-show-text="true"
-                 data-lazy="true"></div>
-        `;
-        window.FB.XFBML.parse(container);
-    } else {
-        // Fallback sử dụng iframe thông thường
-        container.innerHTML = `
-            <iframe src="https://www.facebook.com/plugins/post.php?href=${encodeURIComponent(fanpage.url)}&width=300&show_text=true" 
-                    width="300" height="200" 
-                    style="border:none;overflow:hidden" 
-                    scrolling="no" 
-                    frameborder="0" 
-                    allowfullscreen="true"></iframe>
-        `;
-    }
-
-    // Cập nhật trạng thái sau khi tải
-    setTimeout(() => {
-        fanpage.status = 'exists'; // Giả định tải thành công
-        fanpage.lastChecked = new Date().toISOString();
-        saveData({ fanpages: true });
-    }, 2000);
-}
-
 // Sửa đổi renderFanpageTab để thêm mục xuất
+// Cập nhật phần renderFanpageTab
 function renderFanpageTab() {
     const container = elements.linkLists['fanpage'];
     if (!container) {
@@ -2382,140 +2583,284 @@ function renderFanpageTab() {
     }
 
     container.innerHTML = `
-        <div class="fanpage-controls" id="fanpage-filter-controls">
-            <button class="fanpage-filter-btn active" data-filter="all">ALL</button>
-            <button class="fanpage-filter-btn" data-filter="fanpage">Fanpage</button>
-            <button class="fanpage-filter-btn" data-filter="profile">Cá nhân</button>
-            <button class="fanpage-filter-btn" data-filter="profile-pro">Pro</button>
-            <button class="fanpage-export-btn btn btn-primary" id="export-fanpage-json">Xuất JSON</button>
+        <div class="fanpage-controls">
+            <div class="filter-buttons">
+                <button class="filter-btn active" data-filter="all">All</button>
+                <button class="filter-btn" data-filter="fanpage">Fanpage</button>
+                <button class="filter-btn" data-filter="profile">Cá nhân</button>
+                <button class="filter-btn" data-filter="profile-pro">Pro</button>
+                <button class="filter-btn" data-filter="duplicate">Trùng</button>
+            </div>
+            <div class="action-buttons">
+                <button class="export-btn" id="export-fanpage-json">Xuất</button>
+            </div>
+        </div>
+        <div class="selection-bar">
+            <input type="checkbox" id="select-all-fanpages">
+            <span class="selection-info">All</span>
+            <span class="selection-count">0/${state.fanpages.length}</span>
+            <button class="delete-selected-btn" disabled>Xóa</button>
         </div>
         <div class="fanpage-list"></div>
+        
+        <style>
+            #fanpage-tab {
+                display: flex;
+                flex-direction: column;
+                height: 100%;
+            }
+            .fanpage-controls {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 3px;
+                background: #f5f5f5;
+                border-bottom: 1px solid #ddd;
+                flex-wrap: wrap;
+                gap: 3px;
+            }
+            .filter-buttons {
+                display: flex;
+                gap: 2px;
+                flex-wrap: wrap;
+            }
+            .filter-btn {
+                padding: 6px 12px;
+                border: 1px solid #ddd;
+                background: #fff;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 10px;
+                white-space: nowrap;
+            }
+            .filter-btn.active {
+                background: #1877f2;
+                color: white;
+                border-color: #1877f2;
+            }
+            .action-buttons {
+                display: flex;
+                gap: 6px;
+            }
+            .export-btn {
+                padding: 6px 12px;
+                background: #42b72a;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 13px;
+            }
+            .selection-bar {
+                display: flex;
+                align-items: center;
+                padding: 6px 8px;
+                background: #f0f2f5;
+                border-bottom: 1px solid #ddd;
+                gap: 8px;
+                font-size: 13px;
+            }
+            #select-all-fanpages {
+                margin: 0;
+            }
+            .selection-info {
+                font-weight: bold;
+            }
+            .selection-count {
+                margin-left: auto;
+            }
+            .delete-selected-btn {
+                padding: 4px 8px;
+                background: #ff4d4f;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 13px;
+            }
+            .delete-selected-btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+            .fanpage-list {
+                flex: 1;
+                overflow-y: auto;
+                padding: 4px 0;
+            }
+            .fanpage-item {
+                display: flex;
+                align-items: center;
+                padding: 8px;
+                border-bottom: 1px solid #eee;
+                min-height: 60px;
+            }
+            .fanpage-item:hover {
+                background: #f5f5f5;
+            }
+            .fanpage-checkbox {
+                margin-right: 8px;
+            }
+            .fanpage-thumbnail {
+                width: 50px;
+                height: 50px;
+                margin-right: 8px;
+                flex-shrink: 0;
+                background: #eee;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .fanpage-content {
+                flex: 1;
+                min-width: 0;
+            }
+            .fanpage-title {
+                font-weight: bold;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                margin-bottom: 4px;
+            }
+            .fanpage-meta {
+                display: flex;
+                font-size: 12px;
+                color: #65676b;
+            }
+            .fanpage-type {
+                margin-right: 8px;
+            }
+            .fanpage-actions {
+                display: flex;
+                gap: 4px;
+                margin-left: 8px;
+            }
+            .fanpage-action-btn {
+                width: 28px;
+                height: 28px;
+                border: none;
+                background: #f0f2f5;
+                border-radius: 4px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .fanpage-action-btn:hover {
+                background: #e0e0e0;
+            }
+        </style>
     `;
-
-    const style = document.createElement('style');
-    style.textContent = `
-        #fanpage-tab .fanpage-controls {
-            display: flex;
-            gap: 8px;
-            padding: 10px;
-            background: #f0f2f5;
-            border-bottom: 1px solid #ddd;
-            align-items: center;
-        }
-        #fanpage-tab .fanpage-filter-btn {
-            padding: 8px 16px;
-            border: 1px solid #ddd;
-            background: #f5f5f5;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        #fanpage-tab .fanpage-filter-btn.active {
-            background: #1877f2;
-            color: white;
-            border-color: #1877f2;
-        }
-        #fanpage-tab .fanpage-export-btn {
-            margin-left: auto;
-            padding: 8px 16px;
-            background: #1877f2;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        #fanpage-tab .fanpage-export-btn:hover {
-            background: #0056b3;
-        }
-        #fanpage-tab .link-item {
-            padding: 10px;
-            border-bottom: 1px solid #eee;
-            transition: background 0.2s;
-        }
-        #fanpage-tab .link-item:hover {
-            background: #f0f2f5;
-        }
-        #fanpage-tab .link-item.highlight {
-            background: #e6f3ff;
-            animation: highlight 2s ease-out;
-        }
-        @keyframes highlight {
-            0% { background: #b3d4fc; }
-            100% { background: #e6f3ff; }
-        }
-        #fanpage-tab .link-index {
-            width: 30px;
-            height: 30px;
-            border: none;
-            background: #f0f2f5;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            font-size: 14px;
-            color: #65676b;
-            line-height: 1;
-            padding: 0;
-        }
-        #fanpage-tab .link-index span {
-            display: inline-block;
-            margin: 0 1px;
-            font-size: 14px;
-            line-height: 1;
-        }
-        #fanpage-tab .link-index:hover {
-            background: #e0e0e0;
-        }
-    `;
-    container.appendChild(style);
 
     const listContainer = container.querySelector('.fanpage-list');
     let currentFilter = 'all';
 
     renderFanpageList(listContainer, getFilteredFanpages(currentFilter));
 
-    container.querySelectorAll('.fanpage-filter-btn').forEach(btn => {
+    // Xử lý sự kiện bộ lọc
+    container.querySelectorAll('.filter-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-            container.querySelectorAll('.fanpage-filter-btn').forEach(b => b.classList.remove('active'));
+            container.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             currentFilter = btn.dataset.filter;
 
-            if (currentFilter === 'profile') {
-                const filteredPersonal = filterPersonalFanpages(state.fanpages);
-                renderFanpageList(listContainer, filteredPersonal);
-            } else {
-                renderFanpageList(listContainer, getFilteredFanpages(currentFilter));
-            }
+            const filteredFanpages = getFilteredFanpages(currentFilter);
+            renderFanpageList(listContainer, filteredFanpages);
+            updateSelectionBar(filteredFanpages);
         });
     });
 
+    // Xử lý xuất JSON
     container.querySelector('#export-fanpage-json').addEventListener('click', () => {
-        const filteredFanpages = currentFilter === 'profile'
-            ? filterPersonalFanpages(state.fanpages)
-            : getFilteredFanpages(currentFilter);
+        const filteredFanpages = getFilteredFanpages(currentFilter);
         exportFanpagesToJSON(filteredFanpages);
     });
+
+    // Xử lý chọn tất cả
+    container.querySelector('#select-all-fanpages').addEventListener('change', function () {
+        const filteredFanpages = getFilteredFanpages(currentFilter);
+        const isChecked = this.checked;
+
+        filteredFanpages.forEach(fanpage => {
+            fanpage.checked = isChecked;
+        });
+
+        saveData({ fanpages: true });
+        renderFanpageList(listContainer, filteredFanpages);
+        updateSelectionBar(filteredFanpages);
+    });
+
+    // Xử lý xóa đã chọn
+    container.querySelector('.delete-selected-btn').addEventListener('click', () => {
+        const filteredFanpages = getFilteredFanpages(currentFilter);
+        const selectedFanpages = filteredFanpages.filter(f => f.checked);
+
+        if (selectedFanpages.length === 0) return;
+
+        if (confirm(`Bạn có chắc muốn xóa ${selectedFanpages.length} fanpage đã chọn?`)) {
+            saveBackup('deleteFanpages', { fanpages: [...selectedFanpages] });
+            state.fanpages = state.fanpages.filter(f => !selectedFanpages.includes(f));
+
+            saveData({ fanpages: true });
+            const newFiltered = getFilteredFanpages(currentFilter);
+            renderFanpageList(listContainer, newFiltered);
+            updateSelectionBar(newFiltered);
+
+            showToast(`Đã xóa ${selectedFanpages.length} fanpage`, 'success');
+            addLog(`Đã xóa ${selectedFanpages.length} fanpage`, 'info');
+        }
+    });
+
+    // Khởi tạo thanh chọn
+    updateSelectionBar(getFilteredFanpages(currentFilter));
 }
 
+function updateSelectionBar(fanpages) {
+    const container = elements.linkLists['fanpage'];
+    if (!container) return;
+
+    const selectedCount = fanpages.filter(f => f.checked).length;
+    const totalCount = fanpages.length;
+
+    container.querySelector('.selection-count').textContent = `${selectedCount}/${totalCount}`;
+    container.querySelector('.delete-selected-btn').disabled = selectedCount === 0;
+
+    const selectAllCheckbox = container.querySelector('#select-all-fanpages');
+    if (selectedCount === 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+    } else if (selectedCount === totalCount) {
+        selectAllCheckbox.checked = true;
+        selectAllCheckbox.indeterminate = false;
+    } else {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = true;
+    }
+}
+
+
+
+// Cập nhật hàm getFilteredFanpages để hỗ trợ lọc trùng lặp
 function getFilteredFanpages(filter) {
     let fanpages = [...state.fanpages];
 
-    // Debug: Log dữ liệu fanpages trước khi lọc
-    console.log('Fanpages trước khi lọc:', fanpages.map(f => ({ id: f.id, type: f.type, name: f.name })));
-
-    // Áp dụng bộ lọc (loại bỏ logic cho 'profile')
-    let filteredFanpages = fanpages;
-    if (filter === 'fanpage') {
-        filteredFanpages = fanpages.filter(f => f.type === 'fanpage');
-    } else if (filter === 'profile-pro') {
-        filteredFanpages = fanpages.filter(f => f.type === 'profile-pro');
+    // Áp dụng bộ lọc
+    switch (filter) {
+        case 'fanpage':
+            fanpages = fanpages.filter(f => f.type === 'fanpage');
+            break;
+        case 'profile':
+            fanpages = fanpages.filter(f => f.type === 'profile');
+            break;
+        case 'profile-pro':
+            fanpages = fanpages.filter(f => f.type === 'profile-pro');
+            break;
+        case 'duplicate':
+            fanpages = findDuplicateFanpages();
+            break;
     }
 
-    // Debug: Log dữ liệu sau khi lọc
-    console.log(`Fanpages sau khi lọc (${filter}):`, filteredFanpages.map(f => ({ id: f.id, type: f.type, name: f.name })));
-
-    // Sắp xếp theo loại và tiêu đề
-    return filteredFanpages.sort((a, b) => {
+    // Sắp xếp
+    return fanpages.sort((a, b) => {
         const typeOrder = {
             'profile-pro': 1,
             'profile': 2,
@@ -2534,15 +2879,44 @@ function getFilteredFanpages(filter) {
     });
 }
 
-function renderFanpageList(container, fanpages) {
-    container.innerHTML = ''; // Xóa nội dung cũ
+// Hàm tìm fanpage trùng lặp (theo URL hoặc tiêu đề)
+function findDuplicateFanpages() {
+    const urlMap = {};
+    const titleMap = {};
+    const duplicates = new Set();
 
+    state.fanpages.forEach(fanpage => {
+        // Kiểm tra trùng URL
+        const baseUrl = fanpage.url.split('?')[0];
+        if (urlMap[baseUrl]) {
+            duplicates.add(fanpage);
+            duplicates.add(urlMap[baseUrl]);
+        } else {
+            urlMap[baseUrl] = fanpage;
+        }
+
+        // Kiểm tra trùng tiêu đề (không phân biệt hoa thường)
+        const lowerTitle = fanpage.name.toLowerCase();
+        if (titleMap[lowerTitle]) {
+            duplicates.add(fanpage);
+            duplicates.add(titleMap[lowerTitle]);
+        } else {
+            titleMap[lowerTitle] = fanpage;
+        }
+    });
+
+    return Array.from(duplicates);
+}
+
+function renderFanpageList(container, fanpages) {
+    container.innerHTML = ''; // Xóa toàn bộ nội dung cũ trong container
+
+    // Chỉ render danh sách fanpage, không render fanpage-list-header
     fanpages.forEach((fanpage, index) => {
         const item = document.createElement('div');
-        item.className = 'link-item'; // Chỉ dùng class link-item
+        item.className = `link-item ${fanpage.checked ? 'checked' : ''}`;
         item.dataset.id = fanpage.id;
 
-        // Tạo STT giống tab All Link
         const indexStr = (index + 1).toString();
         const indexDigits = indexStr.split('').map(digit => `<span>${digit}</span>`).join('');
 
@@ -2569,66 +2943,41 @@ function renderFanpageList(container, fanpages) {
             </div>
         `;
 
-        // Thêm CSS cho số thứ tự
-        const style = document.createElement('style');
-        style.textContent = `
-            #fanpage-tab .link-index {
-                width: 30px;
-                height: 30px;
-                border: none;
-                background: #f0f2f5;
-                border-radius: 4px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-                font-size: 14px;
-                color: #65676b;
-                line-height: 1;
-                padding: 0;
-            }
-            #fanpage-tab .link-index span {
-                display: inline-block;
-                margin: 0 1px;
-                font-size: 14px;
-                line-height: 1;
-            }
-            #fanpage-tab .link-index:hover {
-                background: #e0e0e0;
-            }
-        `;
-        container.appendChild(style);
-
         container.appendChild(item);
         loadMiniIframe(item.querySelector('.fanpage-iframe-mini'), fanpage.url);
 
         // Sự kiện checkbox
-        item.querySelector('.link-checkbox').addEventListener('change', () => {
-            fanpage.checked = !fanpage.checked;
+        const checkbox = item.querySelector('.link-checkbox');
+        checkbox.addEventListener('change', () => {
+            fanpage.checked = checkbox.checked;
+            updateSelectionBar(fanpages); // Cập nhật selection-bar
             saveData({ fanpages: true });
-            item.querySelector('.link-checkbox').checked = fanpage.checked;
+            item.classList.toggle('checked', fanpage.checked);
+        });
+
+        // Sự kiện click vào item (toggle checkbox)
+        item.addEventListener('click', (e) => {
+            if (!e.target.closest('.link-checkbox') && !e.target.closest('.link-actions')) {
+                checkbox.checked = !checkbox.checked;
+                checkbox.dispatchEvent(new Event('change'));
+            }
         });
 
         // Sự kiện nút chỉnh sửa
-        item.querySelector('.edit').addEventListener('click', () => {
+        item.querySelector('.edit').addEventListener('click', (e) => {
+            e.stopPropagation();
             showEditFanpagePopup(fanpage);
         });
 
         // Sự kiện nút STT (Xóa fanpage)
-        item.querySelector('.link-index').addEventListener('click', () => {
+        item.querySelector('.link-index').addEventListener('click', (e) => {
+            e.stopPropagation();
             if (confirm(`Xóa fanpage: ${fanpage.url}?`)) {
-                saveBackup('deleteFanpage', { fanpage: { ...fanpage } });
-                state.fanpages = state.fanpages.filter(f => f.id !== fanpage.id);
-                saveData({ fanpages: true });
-                renderFanpageTab();
-                updateCounters();
-                showToast(`Đã xóa fanpage ${fanpage.name}`, 'success');
-                addLog(`Đã xóa fanpage ${fanpage.name} (ID: ${fanpage.id})`, 'info');
+                deleteFanpage(fanpage.id);
             }
         });
     });
 }
-
 
 function showEditFanpagePopup(fanpage) {
     const popup = document.createElement('div');
@@ -2884,24 +3233,7 @@ function groupFanpagesByType(fanpages) {
     return Object.values(groups).filter(g => g.items.length > 0);
 }
 
-function findDuplicateFanpages() {
-    const urlMap = {};
-    const duplicates = [];
 
-    state.fanpages.forEach(f => {
-        const baseUrl = f.url.split('?')[0];
-        if (!urlMap[baseUrl]) urlMap[baseUrl] = [];
-        urlMap[baseUrl].push(f);
-    });
-
-    for (const url in urlMap) {
-        if (urlMap[url].length > 1) {
-            duplicates.push(...urlMap[url]);
-        }
-    }
-
-    return duplicates;
-}
 
 function loadFanpageIframe(container, fanpage) {
     if (fanpage.status === 'exists' && fanpage.lastChecked) {
@@ -3046,5 +3378,172 @@ function getStatusText(status) {
     };
     return statusMap[status] || 'Không xác định';
 }
+// Hàm fetch với retry
+async function fetchWithRetry(url, options = {}, retries = config.maxRetries, delay = config.retryDelay) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), config.requestTimeout);
+            const res = await fetch(url, { ...options, signal: controller.signal });
+            clearTimeout(id);
+            if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            return res;
+        } catch (err) {
+            if (attempt === retries) {
+                try {
+                    const proxyRes = await fetch(`${config.corsProxy}${encodeURIComponent(url)}`, options);
+                    if (!proxyRes.ok) throw new Error(`Proxy HTTP ${proxyRes.status}`);
+                    return proxyRes;
+                } catch (proxyErr) {
+                    throw new Error(`Lỗi sau ${retries} lần thử: ${err.message}, Proxy: ${proxyErr.message}`);
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, delay * attempt));
+        }
+    }
+}
 
+// Kiểm tra token GitHub
+async function validateGithubToken(token) {
+    try {
+        const res = await fetchWithRetry('https://api.github.com/user', {
+            headers: { 'Authorization': `token ${token}` }
+        });
+        return res.ok;
+    } catch {
+        return false;
+    }
+}
+
+// Nhập fanpage từ JSON
+async function importFanpagesFromJSON() {
+    try {
+        state.isLoading = true;
+        showToast('Đang tải danh sách fanpage từ Gist JSON...', 'info');
+
+        const response = await fetchWithRetry(config.fanpageGistUrl, { cache: 'no-cache' });
+        const gistData = await response.json();
+        const fileContent = gistData.files["Jsonfanpage"]?.content;
+
+        if (!fileContent) throw new Error("Không tìm thấy nội dung trong 'Jsonfanpage'");
+
+        let data;
+        try {
+            data = JSON.parse(fileContent);
+        } catch (e) {
+            throw new Error("Nội dung JSON không hợp lệ");
+        }
+
+        if (!Array.isArray(data)) throw new Error('Dữ liệu JSON không hợp lệ (phải là mảng object)');
+
+        const validFanpages = data.filter(item =>
+            typeof item.url === 'string' &&
+            item.url.trim() !== '' &&
+            typeof item.name === 'string' &&
+            item.name.trim() !== ''
+        );
+
+        if (validFanpages.length === 0) {
+            showToast('Không có fanpage hợp lệ nào trong JSON', 'warning');
+            return;
+        }
+
+        if (!confirm(`Bạn có chắc muốn nhập ${validFanpages.length} fanpage từ Gist JSON?`)) {
+            showToast('Đã hủy nhập dữ liệu', 'warning');
+            return;
+        }
+
+        let addedCount = 0;
+        const newFanpages = [];
+        validFanpages.forEach(item => {
+            const trimmedUrl = item.url.trim();
+            const newFanpage = {
+                id: generateId(),
+                url: trimmedUrl,
+                name: item.name || 'Fanpage không tên',
+                description: item.description || '',
+                type: ['fanpage', 'profile', 'profile-pro'].includes(item.type) ? item.type : 'fanpage',
+                date: new Date().toISOString(),
+                checked: false,
+                status: 'pending',
+                thumbnail: item.thumbnail || config.defaultImage
+            };
+            state.fanpages.unshift(newFanpage);
+            newFanpages.push(newFanpage);
+            addedCount++;
+            addLog(`Đã thêm fanpage từ Gist: ${trimmedUrl} (ID: ${newFanpage.id})`, 'success');
+        });
+
+        if (addedCount > 0) {
+            saveBackup('addFanpages', { fanpages: newFanpages });
+            await saveData({ fanpages: true });
+            renderFanpageTab();
+            // Cuộn đến fanpage mới nhất
+            const newFanpageItem = document.querySelector(`.link-item[data-id="${newFanpages[0].id}"]`);
+            if (newFanpageItem && elements.mainContent) {
+                smoothScroll(elements.mainContent, newFanpageItem.offsetTop);
+                newFanpageItem.classList.add('highlight');
+                setTimeout(() => newFanpageItem.classList.remove('highlight'), 2000);
+            }
+            showToast(`Đã thêm ${addedCount} fanpage từ Gist`, 'success');
+            addLog(`Đã nhập ${addedCount} fanpage từ Gist JSON`, 'success');
+        } else {
+            showToast('Không có fanpage nào được thêm', 'warning');
+        }
+    } catch (error) {
+        console.error('Lỗi khi nhập fanpage từ Gist:', error);
+        showToast(`Lỗi khi nhập từ Gist: ${error.message}`, 'danger');
+        addLog(`Lỗi nhập fanpage từ Gist: ${error.message}`, 'error');
+    } finally {
+        state.isLoading = false;
+    }
+}
+
+// Xuất fanpage ra JSON
+async function exportFanpagesToJSON(fanpagesToExport = state.fanpages) {
+    try {
+        if (fanpagesToExport.length === 0) {
+            showToast('Không có fanpage nào để xuất!', 'warning');
+            return;
+        }
+
+        const token = config.githubToken;
+        if (!token || token === 'YOUR_GITHUB_TOKEN_HERE') {
+            showToast('Vui lòng cung cấp token GitHub hợp lệ', 'danger');
+            return;
+        }
+
+        if (!(await validateGithubToken(token))) {
+            showToast('Token GitHub không hợp lệ', 'danger');
+            addLog('Lỗi: Token GitHub không hợp lệ', 'error');
+            return;
+        }
+
+        const content = JSON.stringify(fanpagesToExport, null, 2);
+        const response = await fetchWithRetry(config.fanpageGistUrl, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github+json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                files: { 'Jsonfanpage': { content } }
+            })
+        });
+
+        if (response.status === 429) {
+            const retryAfter = response.headers.get('Retry-After') || 60;
+            showToast(`Quá nhiều yêu cầu, thử lại sau ${retryAfter}s`, 'warning');
+            await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+            return exportFanpagesToJSON(fanpagesToExport);
+        }
+
+        showToast(`Đã xuất ${fanpagesToExport.length} fanpage lên Gist`, 'success');
+        addLog(`Đã xuất ${fanpagesToExport.length} fanpage lên Gist`, 'success');
+    } catch (error) {
+        showToast(`Lỗi khi xuất fanpage lên Gist: ${error.message}`, 'danger');
+        addLog(`Lỗi xuất fanpage lên Gist: ${error.message}`, 'error');
+    }
+}
 init();
