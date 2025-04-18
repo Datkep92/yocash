@@ -1098,6 +1098,8 @@ function showLinkDetailsPopup(link) {
                 </div>
             </div>
             <div class="modal-footer">
+                <button id="copy-link" class="btn btn-secondary">Copy</button>
+                <button id="reload-post" class="btn btn-secondary">Tải lại</button>
                 <button id="close-popup" class="btn btn-secondary">Đóng</button>
             </div>
         </div>
@@ -1167,16 +1169,17 @@ function showLinkDetailsPopup(link) {
         }
         .fb-post-container {
             width: 100%;
-            transform-origin: top left; /* Thu phóng từ góc trên bên trái */
+            transform-origin: top left;
         }
         .fb-post {
-            min-height: 300px; /* Chiều cao tối thiểu để tránh lỗi render */
+            min-height: 300px;
         }
         .modal-footer {
             padding: 15px 20px;
             border-top: 1px solid #eee;
             display: flex;
             justify-content: flex-end;
+            gap: 10px;
             flex-shrink: 0;
         }
         .btn {
@@ -1202,26 +1205,22 @@ function showLinkDetailsPopup(link) {
         const modalBody = popup.querySelector('.modal-body');
         const fbPost = popup.querySelector('.fb-post');
 
-        // Đợi nội dung render xong
         setTimeout(() => {
-            // Lấy chiều cao thực tế của bài viết
             const postHeight = fbPost.scrollHeight;
-            // Lấy chiều cao khả dụng của modal-body (trừ header và footer)
             const modalBodyHeight = modalBody.clientHeight;
 
-            // Nếu bài viết dài hơn chiều cao khả dụng, thu nhỏ
             if (postHeight > modalBodyHeight) {
-                const scaleRatio = (modalBodyHeight - 20) / postHeight; // Trừ 20px để có không gian đệm
+                const scaleRatio = (modalBodyHeight - 20) / postHeight;
                 fbPostContainer.style.transform = `scale(${scaleRatio})`;
-                fbPostContainer.style.width = `${100 / scaleRatio}%`; // Điều chỉnh chiều rộng để tránh bị cắt
+                fbPostContainer.style.width = `${100 / scaleRatio}%`;
             } else {
                 fbPostContainer.style.transform = 'scale(1)';
                 fbPostContainer.style.width = '100%';
             }
-        }, 2000); // Đợi 2 giây để đảm bảo nội dung render xong
+        }, 2000);
     };
 
-    // Khởi tạo lại FB.XFBML.parse() để render bài viết
+    // Hàm render bài viết
     const renderPost = () => {
         if (window.FB) {
             window.FB.XFBML.parse(popup);
@@ -1239,10 +1238,63 @@ function showLinkDetailsPopup(link) {
         }
     };
 
-    // Thử render lại nhiều lần để đảm bảo nội dung được hiển thị đầy đủ
+    // Hàm retry trích xuất HTML
+    const retryExtractContent = async () => {
+        try {
+            showToast('Đang trích xuất lại nội dung...', 'info');
+            addLog(`Retry trích xuất HTML cho link: ${link.url}`, 'info');
+
+            // Giả sử extractContent là hàm trích xuất HTML từ URL
+            const extractedData = await extractContent(link.url);
+
+            // Cập nhật link với dữ liệu mới (title, description, image, v.v.)
+            if (extractedData) {
+                link.title = extractedData.title || link.title;
+                link.description = extractedData.description || link.description;
+                link.image = extractedData.image || link.image;
+                link.status = extractedData.status || link.status;
+
+                // Lưu dữ liệu đã cập nhật
+                saveData({ links: true });
+
+                // Làm mới giao diện bài viết
+                renderPost();
+
+                showToast('Đã trích xuất lại nội dung', 'success');
+                addLog(`Trích xuất HTML thành công cho link: ${link.url}`, 'success');
+            } else {
+                throw new Error('Không thể trích xuất dữ liệu');
+            }
+        } catch (error) {
+            showToast('Lỗi khi trích xuất lại nội dung', 'error');
+            addLog(`Lỗi trích xuất HTML cho link: ${link.url} - ${error.message}`, 'error');
+        }
+    };
+
+    // Thử render ban đầu
     renderPost();
-    setTimeout(renderPost, 1000); // Thử lại sau 1 giây
-    setTimeout(renderPost, 3000); // Thử lại sau 3 giây
+    setTimeout(renderPost, 1000);
+    setTimeout(renderPost, 3000);
+
+    // Sự kiện cho nút Copy
+    const copyBtn = popup.querySelector('#copy-link');
+    copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(link.url)
+            .then(() => {
+                showToast('Đã sao chép link bài viết', 'success');
+                addLog(`Đã sao chép link: ${link.url}`, 'info');
+            })
+            .catch(err => {
+                showToast('Lỗi khi sao chép link', 'error');
+                addLog(`Lỗi sao chép link: ${link.url} - ${err}`, 'error');
+            });
+    });
+
+    // Sự kiện cho nút Tải lại (retry trích xuất HTML)
+    const reloadBtn = popup.querySelector('#reload-post');
+    reloadBtn.addEventListener('click', () => {
+        retryExtractContent();
+    });
 
     // Sự kiện đóng popup
     const closeBtn = popup.querySelector('#close-popup');
