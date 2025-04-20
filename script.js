@@ -1,4 +1,3 @@
-// Cấu hình ứng dụng
 const config = {
     corsProxy: 'https://api.allorigins.win/get?url=', // Proxy để tránh CORS
     imageProxy: 'https://images.weserv.nl/?url=', // Proxy tối ưu hóa hình ảnh
@@ -12,11 +11,10 @@ const config = {
     githubToken: localStorage.getItem('githubToken') || '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', // Token GitHub
     debounceDelay: 500, // Độ trễ debounce (ms)
     fanpageGistUrl: 'https://api.github.com/gists/2cc79f453b3be62607c5ee8cb34e6cab', // Gist cho Jsonfanpage, Jsonalllink, Jsonlink
-    backupUrl: 'http://127.0.0.1:10000', // URL WebDAV backup
-    dataFile: '/var/mobile/new/data-fb.json', // File lưu trữ dữ liệu
     fanpagesPerPage: 20, // Số fanpage hiển thị mỗi trang
     maxRetries: 3, // Số lần thử lại
     retryDelay: 1000 // Delay giữa các lần thử lại (ms)
+    // Xóa: backupUrl, dataFile
 };
 
 // Trạng thái ứng dụng
@@ -85,94 +83,7 @@ function debounce(func, wait) {
     };
 }
 
-// WebDAV Functions
-async function saveToFile(filename, content, retries = 3) {
-    try {
-        const data = typeof content === 'string' ? content : JSON.stringify(content);
-        JSON.parse(data); // Validate JSON
-        for (let attempt = 1; attempt <= retries; attempt++) {
-            try {
-                const controller = new AbortController();
-                const id = setTimeout(() => controller.abort(), 5000);
-                const res = await fetch(`${config.backupUrl}${filename}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'text/plain' },
-                    body: data,
-                    signal: controller.signal
-                });
-                clearTimeout(id);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return true;
-            } catch (err) {
-                if (attempt === retries) throw err;
-                await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-            }
-        }
-    } catch (err) {
-        addLog(`Lỗi khi lưu ${filename}: ${err.message}`, 'error');
-        return false;
-    }
-}
-
-async function loadFromFile(filename) {
-    try {
-        const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), 5000);
-        const res = await fetch(`${config.backupUrl}${filename}`, { signal: controller.signal });
-        clearTimeout(id);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.text();
-    } catch (err) {
-        addLog(`Lỗi khi đọc ${filename}: ${err.message}`, 'error');
-        return null;
-    }
-}
-
-// LocalStorage Backup
-function saveToLocalStorage() {
-    try {
-        localStorage.setItem('data-fb', JSON.stringify({
-            links: state.links,
-            fanpages: state.fanpages,
-            logs: state.logs,
-            scrollPosition: state.scrollPosition,
-            dateFilter: state.dateFilter,
-            fanpageFilter: state.fanpageFilter
-        }));
-    } catch (e) {
-        addLog(`Lỗi lưu localStorage: ${e.message}`, 'error');
-    }
-}
-
-function loadFromLocalStorage() {
-    try {
-        const data = localStorage.getItem('data-fb');
-        return data ? JSON.parse(data) : null;
-    } catch (e) {
-        addLog(`Lỗi tải localStorage: ${e.message}`, 'error');
-        return null;
-    }
-}
-
-// Data Management
 const debouncedSaveData = debounce(async () => {
-    const data = {
-        links: state.links,
-        logs: state.logs,
-        scrollPosition: state.scrollPosition,
-        dateFilter: state.dateFilter
-    };
-    const success = await saveToFile(config.dataFile, data);
-    if (success) {
-        saveToLocalStorage(); // Backup to localStorage
-    } else {
-        addLog('Không thể lưu dữ liệu vào WebDAV', 'error');
-        saveToLocalStorage(); // Fallback to localStorage
-    }
-}, config.debounceDelay);
-
-async function saveData(changes = {}) {
-    if (Object.keys(changes).length === 0) return;
     const data = {
         links: state.links,
         fanpages: state.fanpages,
@@ -181,15 +92,34 @@ async function saveData(changes = {}) {
         dateFilter: state.dateFilter,
         fanpageFilter: state.fanpageFilter
     };
-    const success = await saveToFile(config.dataFile, data);
+
+    const success = await saveToIndexedDB('appData', data);
     if (success) {
-        saveToLocalStorage();
+        addLog('Đã lưu dữ liệu vào IndexedDB (debounced)', 'info');
     } else {
-        addLog('Không thể lưu dữ liệu vào WebDAV', 'error');
-        saveToLocalStorage();
+        addLog('Không thể lưu dữ liệu vào IndexedDB', 'error');
+    }
+}, config.debounceDelay);
+
+async function saveData(changes = {}) {
+    if (Object.keys(changes).length === 0) return;
+
+    const data = {
+        links: state.links,
+        fanpages: state.fanpages,
+        logs: state.logs,
+        scrollPosition: state.scrollPosition,
+        dateFilter: state.dateFilter,
+        fanpageFilter: state.fanpageFilter
+    };
+
+    const success = await saveToIndexedDB('appData', data);
+    if (success) {
+        addLog('Đã lưu dữ liệu vào IndexedDB', 'info');
+    } else {
+        addLog('Không thể lưu dữ liệu vào IndexedDB', 'error');
     }
 }
-
 
 
 // Smooth Scroll
@@ -1870,19 +1800,16 @@ function renderTabContent(tab) {
 }
 
 
-// Khởi tạo
-function init() {
-    window.addEventListener('DOMContentLoaded', async () => {
-        try {
-            await loadData();
-            setupEventListeners();
-            renderTabContent('all-link');
-        } catch (error) {
-            console.error('Lỗi khởi tạo:', error);
-            showToast('Lỗi khởi tạo ứng dụng', 'danger');
-            addLog(`Lỗi khởi tạo: ${error.message}`, 'error');
-        }
-    });
+async function init() {
+    try {
+        await initIndexedDB(); // Khởi tạo IndexedDB
+        await loadData(); // Tải dữ liệu
+        // Các thiết lập sự kiện khác vẫn giữ nguyên
+        setupEventListeners();
+    } catch (error) {
+        console.error('Lỗi khởi tạo ứng dụng:', error);
+        showToast('Lỗi khởi tạo ứng dụng', 'danger');
+    }
 }
 
 
@@ -2781,23 +2708,7 @@ async function loadData() {
 
     const hideLoading = showLoading();
     try {
-        let savedData = null;
-        const savedContent = await loadFromFile(config.dataFile);
-        if (savedContent) {
-            try {
-                savedData = JSON.parse(savedContent);
-            } catch (e) {
-                addLog('Dữ liệu JSON không hợp lệ, thử localStorage', 'error');
-            }
-        }
-
-        if (!savedData) {
-            const localData = loadFromLocalStorage();
-            if (localData) {
-                savedData = localData;
-                addLog('Đã tải dữ liệu từ localStorage', 'info');
-            }
-        }
+        const savedData = await loadFromIndexedDB('appData');
 
         if (savedData) {
             state.links = savedData.links || [];
@@ -2812,6 +2723,8 @@ async function loadData() {
                 searchQuery: ''
             };
             state.fanpageFilter = savedData.fanpageFilter || { currentPage: 1 };
+
+            // Chuẩn hóa dữ liệu links
             state.links = state.links.map(link => ({
                 ...link,
                 post_type: link.post_type || 'unknown',
@@ -2819,6 +2732,8 @@ async function loadData() {
                 checked: link.checked || false,
                 note: link.note || ''
             }));
+
+            // Chuẩn hóa dữ liệu fanpages
             state.fanpages = state.fanpages.map(fanpage => ({
                 ...fanpage,
                 id: fanpage.id || generateId(),
@@ -2828,8 +2743,10 @@ async function loadData() {
                 thumbnail: fanpage.thumbnail || config.defaultImage,
                 description: fanpage.description || ''
             }));
+
+            addLog('Đã tải dữ liệu từ IndexedDB', 'info');
         } else {
-            addLog('Không tìm thấy dữ liệu, sử dụng mặc định', 'warning');
+            addLog('Không tìm thấy dữ liệu trong IndexedDB, sử dụng mặc định', 'warning');
         }
 
         updateCounters();
@@ -2838,7 +2755,7 @@ async function loadData() {
             elements.mainContent.scrollTop = state.scrollPosition;
         }
     } catch (error) {
-        console.error('Lỗi tải dữ liệu:', error);
+        console.error('Lỗi tải dữ liệu từ IndexedDB:', error);
         showToast('Không thể tải dữ liệu, sử dụng mặc định', 'danger');
         state.links = [];
         state.fanpages = [];
@@ -3388,5 +3305,82 @@ function renderFanpageTab() {
 
     updateSelectionBar(getFilteredFanpages(currentFilter));
 }
+
+// Khởi tạo IndexedDB
+const dbName = 'LinkManagerDB';
+const dbVersion = 1;
+let db;
+
+function initIndexedDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(dbName, dbVersion);
+
+        request.onupgradeneeded = (event) => {
+            db = event.target.result;
+            // Tạo object store cho dữ liệu
+            if (!db.objectStoreNames.contains('appData')) {
+                db.createObjectStore('appData', { keyPath: 'key' });
+            }
+        };
+
+        request.onsuccess = (event) => {
+            db = event.target.result;
+            resolve(db);
+        };
+
+        request.onerror = (event) => {
+            reject(new Error('Không thể mở IndexedDB: ' + event.target.error));
+        };
+    });
+}
+
+// Hàm lưu dữ liệu vào IndexedDB
+async function saveToIndexedDB(key, data) {
+    try {
+        if (!db) {
+            await initIndexedDB();
+        }
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(['appData'], 'readwrite');
+            const store = transaction.objectStore('appData');
+            const request = store.put({ key, data });
+
+            request.onsuccess = () => resolve(true);
+            request.onerror = () => {
+                addLog(`Lỗi khi lưu ${key} vào IndexedDB: ${request.error}`, 'error');
+                reject(request.error);
+            };
+        });
+    } catch (err) {
+        addLog(`Lỗi khi lưu ${key} vào IndexedDB: ${err.message}`, 'error');
+        return false;
+    }
+}
+
+// Hàm đọc dữ liệu từ IndexedDB
+async function loadFromIndexedDB(key) {
+    try {
+        if (!db) {
+            await initIndexedDB();
+        }
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(['appData'], 'readonly');
+            const store = transaction.objectStore('appData');
+            const request = store.get(key);
+
+            request.onsuccess = () => {
+                resolve(request.result ? request.result.data : null);
+            };
+            request.onerror = () => {
+                addLog(`Lỗi khi đọc ${key} từ IndexedDB: ${request.error}`, 'error');
+                reject(request.error);
+            };
+        });
+    } catch (err) {
+        addLog(`Lỗi khi đọc ${key} từ IndexedDB: ${err.message}`, 'error');
+        return null;
+    }
+}
+
 
 init();
