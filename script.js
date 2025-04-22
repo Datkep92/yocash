@@ -9,171 +9,16 @@ const config = {
     maxLogs: 100, // Số log tối đa
     scrollDuration: 1000, // Thời gian cuộn (ms)
     toastDuration: 3000, // Thời gian hiển thị toast (ms)
-    githubToken: localStorage.getItem('githubToken') || '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', // Token GitHub
+    githubToken: localStorage.getItem('githubToken') || 'chưa có', // Token GitHub
     debounceDelay: 500, // Độ trễ debounce (ms)
-    fanpageGistUrl: 'https://api.github.com/gists/2cc79f453b3be62607c5ee8cb34e6cab', // Gist cho Jsonfanpage, Jsonalllink, Jsonlink
+    fanpageGistUrl: 'https://api.github.com/gists/eaa7aafb85a6fe7546f6c6434b93810c', // Gist cho Jsonfanpage, Jsonalllink, Jsonlink
     backupUrl: 'http://127.0.0.1:10000', // URL WebDAV backup
     dataFile: '/var/mobile/new/data-fb.json', // File lưu trữ dữ liệu
     fanpagesPerPage: 20, // Số fanpage hiển thị mỗi trang
     maxRetries: 3, // Số lần thử lại
-    retryDelay: 1000,
-    dbName: 'FBLinkManagerDB',
-    dbVersion: 1,
-    storeNames: {
-        links: 'links',
-        fanpages: 'fanpages',
-        logs: 'logs',
-        settings: 'settings'
-    }
+    retryDelay: 1000 // Delay giữa các lần thử lại (ms)
 };
 
-// Hàm khởi tạo/mở cơ sở dữ liệu
-async function openDB() {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(config.dbName, config.dbVersion);
-
-        request.onerror = (event) => {
-            console.error('Lỗi mở IndexedDB:', event.target.error);
-            reject(event.target.error);
-        };
-
-        request.onsuccess = (event) => {
-            const db = event.target.result;
-            resolve(db);
-        };
-
-        request.onupgradeneeded = (event) => {
-            const db = event.target.result;
-
-            // Tạo các object store nếu chưa tồn tại
-            if (!db.objectStoreNames.contains(config.storeNames.links)) {
-                db.createObjectStore(config.storeNames.links, { keyPath: 'id' });
-            }
-            if (!db.objectStoreNames.contains(config.storeNames.fanpages)) {
-                db.createObjectStore(config.storeNames.fanpages, { keyPath: 'id' });
-            }
-            if (!db.objectStoreNames.contains(config.storeNames.logs)) {
-                db.createObjectStore(config.storeNames.logs, { keyPath: 'timestamp' });
-            }
-            if (!db.objectStoreNames.contains(config.storeNames.settings)) {
-                db.createObjectStore(config.storeNames.settings, { keyPath: 'name' });
-            }
-        };
-    });
-}
-
-// Hàm helper để thực hiện các thao tác với IndexedDB
-async function dbOperation(storeName, operation, data) {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(storeName, 'readwrite');
-        const store = transaction.objectStore(storeName);
-
-        let request;
-        switch (operation) {
-            case 'get':
-                request = store.get(data);
-                break;
-            case 'getAll':
-                request = store.getAll();
-                break;
-            case 'add':
-                request = store.add(data);
-                break;
-            case 'put':
-                request = store.put(data);
-                break;
-            case 'delete':
-                request = store.delete(data);
-                break;
-            case 'clear':
-                request = store.clear();
-                break;
-            default:
-                reject(new Error('Operation không hợp lệ'));
-        }
-
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = (event) => reject(event.target.error);
-    });
-}
-
-// Thay thế hàm saveToFile và loadFromFile
-async function saveToDB(dataType, data) {
-    try {
-        // Nếu là mảng, lưu từng item
-        if (Array.isArray(data)) {
-            const promises = data.map(item =>
-                dbOperation(config.storeNames[dataType], 'put', item)
-            );
-            await Promise.all(promises);
-        } else {
-            // Lưu object đơn lẻ
-            await dbOperation(config.storeNames[dataType], 'put', data);
-        }
-        return true;
-    } catch (error) {
-        addLog(`Lỗi khi lưu ${dataType}: ${error.message}`, 'error');
-        return false;
-    }
-}
-
-async function loadFromDB(dataType) {
-    try {
-        const data = await dbOperation(config.storeNames[dataType], 'getAll');
-        return data || [];
-    } catch (error) {
-        addLog(`Lỗi khi đọc ${dataType}: ${error.message}`, 'error');
-        return null;
-    }
-}
-
-// Thay thế hàm saveData
-async function saveData(changes = {}) {
-    if (Object.keys(changes).length === 0) return;
-
-    try {
-        const promises = [];
-
-        if (changes.links) {
-            promises.push(saveToDB('links', state.links));
-        }
-        if (changes.fanpages) {
-            promises.push(saveToDB('fanpages', state.fanpages));
-        }
-        if (changes.logs) {
-            promises.push(saveToDB('logs', state.logs));
-        }
-        if (changes.scrollPosition) {
-            promises.push(dbOperation(config.storeNames.settings, 'put', {
-                name: 'scrollPosition',
-                value: state.scrollPosition
-            }));
-        }
-        if (changes.dateFilter) {
-            promises.push(dbOperation(config.storeNames.settings, 'put', {
-                name: 'dateFilter',
-                value: state.dateFilter
-            }));
-        }
-        if (changes.fanpageFilter) {
-            promises.push(dbOperation(config.storeNames.settings, 'put', {
-                name: 'fanpageFilter',
-                value: state.fanpageFilter
-            }));
-        }
-        if (changes.undoStack) {
-            promises.push(dbOperation(config.storeNames.settings, 'put', {
-                name: 'undoStack',
-                value: state.undoStack
-            }));
-        }
-
-        await Promise.all(promises);
-    } catch (error) {
-        addLog(`Lỗi khi lưu dữ liệu: ${error.message}`, 'error');
-    }
-}
 // Trạng thái ứng dụng
 const state = {
     links: [], // Danh sách link
@@ -240,100 +85,129 @@ function debounce(func, wait) {
     };
 }
 
-const debouncedSaveData = debounce(async (changes = {}) => {
-    await saveData(changes);
-}, config.debounceDelay);
-
-async function backupData() {
+// WebDAV Functions
+async function saveToFile(filename, content, retries = 3) {
     try {
-        const data = {
-            links: state.links,
-            fanpages: state.fanpages,
-            logs: state.logs,
-            settings: {
-                scrollPosition: state.scrollPosition,
-                dateFilter: state.dateFilter,
-                fanpageFilter: state.fanpageFilter,
-                undoStack: state.undoStack
+        const data = typeof content === 'string' ? content : JSON.stringify(content);
+        JSON.parse(data); // Validate JSON
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+                const controller = new AbortController();
+                const id = setTimeout(() => controller.abort(), 5000);
+                const res = await fetch(`${config.backupUrl}${filename}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: data,
+                    signal: controller.signal
+                });
+                clearTimeout(id);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return true;
+            } catch (err) {
+                if (attempt === retries) throw err;
+                await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
             }
-        };
-
-        // Tạo blob để tải xuống
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `fb-link-manager-backup-${new Date().toISOString().slice(0, 10)}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        showToast('Đã tạo backup dữ liệu', 'success');
-        addLog('Đã tạo backup dữ liệu', 'info');
-    } catch (error) {
-        showToast('Lỗi khi tạo backup', 'danger');
-        addLog(`Lỗi khi tạo backup: ${error.message}`, 'error');
+        }
+    } catch (err) {
+        addLog(`Lỗi khi lưu ${filename}: ${err.message}`, 'error');
+        return false;
     }
 }
 
-async function restoreData(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-
-        reader.onload = async (event) => {
-            try {
-                const data = JSON.parse(event.target.result);
-
-                // Xóa dữ liệu cũ
-                await Promise.all([
-                    dbOperation(config.storeNames.links, 'clear'),
-                    dbOperation(config.storeNames.fanpages, 'clear'),
-                    dbOperation(config.storeNames.logs, 'clear'),
-                    dbOperation(config.storeNames.settings, 'clear')
-                ]);
-
-                // Lưu dữ liệu mới
-                await Promise.all([
-                    saveToDB('links', data.links || []),
-                    saveToDB('fanpages', data.fanpages || []),
-                    saveToDB('logs', data.logs || []),
-                    dbOperation(config.storeNames.settings, 'put', {
-                        name: 'scrollPosition',
-                        value: data.settings?.scrollPosition || 0
-                    }),
-                    dbOperation(config.storeNames.settings, 'put', {
-                        name: 'dateFilter',
-                        value: data.settings?.dateFilter || {
-                            startDate: '',
-                            endDate: '',
-                            status: 'all',
-                            groupTitles: false,
-                            searchQuery: ''
-                        }
-                    }),
-                    dbOperation(config.storeNames.settings, 'put', {
-                        name: 'fanpageFilter',
-                        value: data.settings?.fanpageFilter || { currentPage: 1 }
-                    }),
-                    dbOperation(config.storeNames.settings, 'put', {
-                        name: 'undoStack',
-                        value: data.settings?.undoStack || []
-                    })
-                ]);
-
-                // Tải lại ứng dụng
-                await loadData();
-                resolve();
-            } catch (error) {
-                reject(error);
-            }
-        };
-
-        reader.onerror = () => reject(new Error('Lỗi đọc file'));
-        reader.readAsText(file);
-    });
+async function loadFromFile(filename) {
+    try {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(`${config.backupUrl}${filename}`, { signal: controller.signal });
+        clearTimeout(id);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.text();
+    } catch (err) {
+        addLog(`Lỗi khi đọc ${filename}: ${err.message}`, 'error');
+        return null;
+    }
 }
+
+// LocalStorage Backup
+function saveToLocalStorage() {
+    try {
+        localStorage.setItem('data-fb', JSON.stringify({
+            links: state.links,
+            fanpages: state.fanpages,
+            logs: state.logs,
+            scrollPosition: state.scrollPosition,
+            dateFilter: state.dateFilter,
+            fanpageFilter: state.fanpageFilter
+        }));
+    } catch (e) {
+        addLog(`Lỗi lưu localStorage: ${e.message}`, 'error');
+    }
+}
+
+function loadFromLocalStorage() {
+    try {
+        const data = localStorage.getItem('data-fb');
+        return data ? JSON.parse(data) : null;
+    } catch (e) {
+        addLog(`Lỗi tải localStorage: ${e.message}`, 'error');
+        return null;
+    }
+}
+
+// Data Management
+const debouncedSaveData = debounce(async () => {
+    const data = {
+        links: state.links,
+        logs: state.logs,
+        scrollPosition: state.scrollPosition,
+        dateFilter: state.dateFilter
+    };
+    const success = await saveToFile(config.dataFile, data);
+    if (success) {
+        saveToLocalStorage(); // Backup to localStorage
+    } else {
+        addLog('Không thể lưu dữ liệu vào WebDAV', 'error');
+        saveToLocalStorage(); // Fallback to localStorage
+    }
+}, config.debounceDelay);
+
+
+async function saveData(changes = {}) {
+    if (Object.keys(changes).length === 0) return;
+    const data = {
+        links: state.links,
+        fanpages: state.fanpages,
+        logs: state.logs,
+        scrollPosition: state.scrollPosition,
+        dateFilter: state.dateFilter,
+        fanpageFilter: state.fanpageFilter
+    };
+    try {
+        const db = await openDatabase();
+        const transaction = db.transaction(storeName, "readwrite");
+        const store = transaction.objectStore(storeName);
+
+        // Xóa dữ liệu cũ trước khi lưu mới
+        store.clear();
+
+        // Lưu dữ liệu mới vào store
+        store.put({ id: 1, data: data });
+
+        // Đợi hoàn tất giao dịch
+        await new Promise((resolve, reject) => {
+            transaction.oncomplete = resolve;
+            transaction.onerror = reject;
+        });
+
+        saveToLocalStorage();
+    } catch (error) {
+        addLog('Không thể lưu dữ liệu vào IndexedDB', 'error');
+        saveToLocalStorage();
+    }
+}
+
+
+
 // Smooth Scroll
 function smoothScroll(element, targetPosition, duration = config.scrollDuration) {
     const startPosition = element.scrollTop;
@@ -608,41 +482,85 @@ function switchTab(tab) {
 }
 
 function getLinksForCurrentTab() {
-    if (state.currentTab === 'all-link') return state.links;
-    if (state.currentTab === 'blacklist') return state.links.filter(l => l.blacklistStatus === 'blacklisted');
-    if (state.currentTab === 'error') return state.links.filter(l => ['error', 'login', 'link_hỏng'].includes(l.status) && l.blacklistStatus !== 'blacklisted');
-    if (state.currentTab === 'duplicate') return state.links.filter((l, i) => state.links.findIndex(x => x.title === l.title) !== i);
-    if (state.currentTab === 'date-filter') return state.links.filter(link => {
-        const linkDate = new Date(link.date);
-        const start = new Date(state.dateFilter.startDate);
-        const end = new Date(state.dateFilter.endDate);
-        const inDateRange = (!state.dateFilter.startDate || !state.dateFilter.endDate) || (linkDate >= start && linkDate <= end);
-        const matchStatus = state.dateFilter.status === 'all' || link.status === state.dateFilter.status;
-        const matchSearch = !state.dateFilter.searchQuery ||
-            (link.title && link.title.toLowerCase().includes(state.dateFilter.searchQuery.toLowerCase())) ||
-            (link.description && link.description.toLowerCase().includes(state.dateFilter.searchQuery.toLowerCase()));
-        return inDateRange && matchStatus && matchSearch;
-    });
-    if (state.currentTab === 'filter') {
+    let filteredLinks = state.links;
+
+    // Lọc theo tab hiện tại
+    switch (state.currentTab) {
+        case 'blacklist':
+            filteredLinks = filteredLinks.filter(l => l.blacklistStatus === 'blacklisted');
+            break;
+        case 'error':
+            filteredLinks = filteredLinks.filter(l =>
+                ['error', 'login', 'link_hỏng'].includes(l.status) &&
+                l.blacklistStatus !== 'blacklisted'
+            );
+            break;
+        case 'duplicate':
+            const urlGroups = {};
+            state.links.forEach(l => {
+                const url = l.url;
+                if (!urlGroups[url]) urlGroups[url] = [];
+                urlGroups[url].push(l);
+            });
+            filteredLinks = Object.values(urlGroups)
+                .filter(group => group.length > 1)
+                .flat();
+            break;
+    }
+
+    // Lọc theo currentFilter (chỉ áp dụng cho tab all-link hoặc filter)
+    if (state.currentTab === 'all-link' || state.currentTab === 'filter') {
         switch (state.currentFilter) {
+            case 'group':
+                filteredLinks = filteredLinks.filter(l => l.post_type === 'group' && l.blacklistStatus !== 'blacklisted');
+                break;
+            case 'photo':
+                filteredLinks = filteredLinks.filter(l => l.post_type === 'photo' && l.blacklistStatus !== 'blacklisted');
+                break;
+            case 'story':
+                filteredLinks = filteredLinks.filter(l => l.post_type === 'story' && l.blacklistStatus !== 'blacklisted');
+                break;
             case 'video':
-                return state.links.filter(l => l.post_type === 'video' && l.blacklistStatus !== 'blacklisted');
-            case 'login':
-                return state.links.filter(l => l.status === 'login' && l.blacklistStatus !== 'blacklisted');
-            case 'duplicate':
-                return state.links.filter((l, i) => state.links.findIndex(x => x.title === l.title) !== i && l.blacklistStatus !== 'blacklisted');
+                filteredLinks = filteredLinks.filter(l => l.post_type === 'video' && l.blacklistStatus !== 'blacklisted');
+                break;
+            case 'reel':
+                filteredLinks = filteredLinks.filter(l => l.post_type === 'reel' && l.blacklistStatus !== 'blacklisted');
+                break;
+            case 'post':
+                filteredLinks = filteredLinks.filter(l => l.post_type === 'post' && l.blacklistStatus !== 'blacklisted');
+                break;
+            case 'profile':
+                filteredLinks = filteredLinks.filter(l => l.post_type === 'profile' && l.blacklistStatus !== 'blacklisted');
+                break;
             case 'blacklist':
-                return state.links.filter(l => l.blacklistStatus === 'blacklisted');
+                filteredLinks = filteredLinks.filter(l => l.blacklistStatus === 'blacklisted');
+                break;
             case 'note':
-                return state.links.filter(l => l.note && l.note.trim() !== '');
+                filteredLinks = filteredLinks.filter(l => l.note && l.note.trim() !== '');
+                break;
+            case 'iframe':
+                filteredLinks = filteredLinks.filter(l => l.status === 'iframe' && l.blacklistStatus !== 'blacklisted');
+                break;
+            case 'success':
+                filteredLinks = filteredLinks.filter(l => l.status === 'success' && l.blacklistStatus !== 'blacklisted');
+                break;
             default:
-                return state.links;
+                filteredLinks = filteredLinks.filter(l => l.blacklistStatus !== 'blacklisted');
         }
     }
-    return [];
+
+    // Lọc theo searchQuery (nếu có)
+    if (state.dateFilter.searchQuery) {
+        const query = state.dateFilter.searchQuery.toLowerCase();
+        filteredLinks = filteredLinks.filter(l =>
+            (l.title && l.title.toLowerCase().includes(query)) ||
+            (l.description && l.description.toLowerCase().includes(query)) ||
+            (l.url && l.url.toLowerCase().includes(query))
+        );
+    }
+
+    return filteredLinks;
 }
-
-
 
 function renderFilteredLinks(container, filter) {
     container.innerHTML = '';
@@ -672,13 +590,11 @@ function renderFilteredLinks(container, filter) {
             filteredLinks = state.links.filter(l => l.post_type === 'profile' && l.blacklistStatus !== 'blacklisted');
             break;
         case 'duplicate':
-            // Nhóm các link theo URL đầy đủ
             const urlGroups = {};
             state.links.forEach(l => {
                 if (!urlGroups[l.url]) urlGroups[l.url] = [];
                 urlGroups[l.url].push(l);
             });
-            // Lọc các nhóm có nhiều hơn 1 link và không bị blacklist
             filteredLinks = Object.values(urlGroups)
                 .filter(group => group.length > 1 && group.every(l => l.blacklistStatus !== 'blacklisted'))
                 .flat();
@@ -688,6 +604,12 @@ function renderFilteredLinks(container, filter) {
             break;
         case 'note':
             filteredLinks = state.links.filter(l => l.note && l.note.trim() !== '');
+            break;
+        case 'iframe':
+            filteredLinks = state.links.filter(l => l.status === 'iframe' && l.blacklistStatus !== 'blacklisted');
+            break;
+        case 'success':
+            filteredLinks = state.links.filter(l => l.status === 'success' && l.blacklistStatus !== 'blacklisted');
             break;
         default:
             filteredLinks = state.links;
@@ -704,7 +626,6 @@ function renderFilteredLinks(container, filter) {
     if (filteredLinks.length === 0) {
         container.innerHTML = '<p>Không có link nào phù hợp.</p>';
     } else if (filter === 'duplicate') {
-        // Nhóm lại để hiển thị cạnh nhau
         const urlGroups = {};
         filteredLinks.forEach(l => {
             if (!urlGroups[l.url]) urlGroups[l.url] = [];
@@ -735,112 +656,187 @@ function renderFilteredLinks(container, filter) {
 
 function renderLinks(tab) {
     const container = elements.linkLists[tab];
-    if (!container) return;
-
-    let linksToRender = [];
-    if (tab === 'all-link') {
-        switch (state.currentFilter || 'all') {
-            case 'group':
-                linksToRender = state.links.filter(l => l.post_type === 'group' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'photo':
-                linksToRender = state.links.filter(l => l.post_type === 'photo' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'story':
-                linksToRender = state.links.filter(l => l.post_type === 'story' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'video':
-                linksToRender = state.links.filter(l => l.post_type === 'video' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'reel':
-                linksToRender = state.links.filter(l => l.post_type === 'reel' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'post':
-                linksToRender = state.links.filter(l => l.post_type === 'post' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'profile':
-                linksToRender = state.links.filter(l => l.post_type === 'profile' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'duplicate':
-                const urlGroups = {};
-                state.links.forEach(l => {
-                    if (!urlGroups[l.url]) urlGroups[l.url] = [];
-                    urlGroups[l.url].push(l);
-                });
-                linksToRender = Object.values(urlGroups)
-                    .filter(group => group.length > 1 && group.every(l => l.blacklistStatus !== 'blacklisted'))
-                    .flat();
-                break;
-            case 'blacklist':
-                linksToRender = state.links.filter(l => l.blacklistStatus === 'blacklisted');
-                break;
-            case 'note':
-                linksToRender = state.links.filter(l => l.note && l.note.trim() !== '');
-                break;
-            default:
-                linksToRender = state.links;
-        }
-    } else if (tab === 'blacklist') {
-        linksToRender = state.links.filter(l => l.blacklistStatus === 'blacklisted');
-    } else if (tab === 'error') {
-        linksToRender = state.links.filter(l => ['error', 'login', 'link_hỏng'].includes(l.status) && l.blacklistStatus !== 'blacklisted');
-    } else if (tab === 'duplicate') {
-        const urlGroups = {};
-        state.links.forEach(l => {
-            if (!urlGroups[l.url]) urlGroups[l.url] = [];
-            urlGroups[l.url].push(l);
-        });
-        linksToRender = Object.values(urlGroups)
-            .filter(group => group.length > 1 && group.every(l => l.blacklistStatus !== 'blacklisted'))
-            .flat();
-    }
-
-    container.innerHTML = '';
-    if (linksToRender.length === 0) {
-        container.innerHTML = `<p>Không có link nào trong ${tab}</p>`;
-        if (tab === 'error') {
-            container.innerHTML += '<button class="retry-error-btn" style="margin: 10px;">Thử lại tất cả</button>';
-            container.querySelector('.retry-error-btn')?.addEventListener('click', () => {
-                linksToRender.forEach(link => retryLink(link.id));
-                showToast(`Đang thử lại ${linksToRender.length} link lỗi`, 'info');
-                addLog(`Đã thử lại ${linksToRender.length} link lỗi`, 'info');
-            });
-        }
+    if (!container) {
+        console.error(`Không tìm thấy tab: ${tab}`);
         return;
     }
 
-    const fragment = document.createDocumentFragment();
-    if (tab === 'duplicate' || (tab === 'all-link' && state.currentFilter === 'duplicate')) {
+    container.innerHTML = '';
+
+    let linksToRender = getLinksForCurrentTab();
+
+    let searchQuery = '';
+    if (state.dateFilter.searchQuery) {
+        searchQuery = removeVietnameseTones(state.dateFilter.searchQuery.toLowerCase());
+        linksToRender = linksToRender.filter(link => {
+            const title = removeVietnameseTones((link.title || '').toLowerCase());
+            const description = removeVietnameseTones((link.description || '').toLowerCase());
+            return title.includes(searchQuery) || description.includes(searchQuery);
+        });
+    }
+
+    const header = document.createElement('div');
+    header.className = 'list-header';
+
+    if (searchQuery) {
+        header.innerHTML = `
+            <div class="search-info">
+                <i class="fas fa-search"></i>
+                <span>Kết quả tìm kiếm cho: "${state.dateFilter.searchQuery}"</span>
+                <span class="result-count">${linksToRender.length} kết quả</span>
+                <button class="clear-search-btn">Xóa tìm kiếm</button>
+            </div>
+        `;
+
+        header.querySelector('.clear-search-btn').addEventListener('click', () => {
+            state.dateFilter.searchQuery = '';
+            saveData({ dateFilter: true });
+            renderTabContent(state.currentTab);
+        });
+    } else {
+        const filterName = {
+            'all': 'Tất cả',
+            'group': 'Group',
+            'photo': 'Photo',
+            'story': 'Story',
+            'video': 'Video',
+            'reel': 'Reel',
+            'post': 'Post',
+            'duplicate': 'Trùng lặp',
+            'blacklist': 'Blacklist',
+            'note': 'Có ghi chú',
+            'iframe': 'Iframe',
+            'success': 'Thành công'
+        }[state.currentFilter] || '';
+
+        header.innerHTML = `
+            <div class="filter-info">
+                <i class="fas fa-filter"></i>
+                <span>${filterName}</span>
+                <span class="result-count">${linksToRender.length} kết quả</span>
+            </div>
+        `;
+    }
+
+    container.appendChild(header);
+
+    const listContainer = document.createElement('div');
+    listContainer.className = 'link-list-container';
+    container.appendChild(listContainer);
+
+    if (linksToRender.length === 0) {
+        listContainer.innerHTML = `
+            <div class="empty-message">
+                <i class="fas fa-exclamation-circle"></i>
+                <p>Không tìm thấy link nào phù hợp</p>
+                ${searchQuery ?
+                `<p>Với từ khóa: "${state.dateFilter.searchQuery}"</p>` :
+                `<p>Với bộ lọc hiện tại</p>`}
+            </div>
+        `;
+    } else if (tab === 'duplicate' || state.currentFilter === 'duplicate') {
         const urlGroups = {};
         linksToRender.forEach(l => {
-            if (!urlGroups[l.url]) urlGroups[l.url] = [];
-            urlGroups[l.url].push(l);
+            const baseUrl = l.url.split('?')[0];
+            if (!urlGroups[baseUrl]) urlGroups[baseUrl] = [];
+            urlGroups[baseUrl].push(l);
         });
 
         Object.entries(urlGroups).forEach(([url, links]) => {
-            const groupDiv = document.createElement('div');
-            groupDiv.className = 'grouped-duplicates';
-            groupDiv.innerHTML = `<h4>URL: ${url} (${links.length} link)</h4>`;
-            const linksContainer = document.createElement('div');
-            linksContainer.className = 'duplicates-container';
-            links.forEach((link, index) => {
-                const linkItem = createLinkItem(link, index);
-                linksContainer.appendChild(linkItem);
-            });
-            groupDiv.appendChild(linksContainer);
-            fragment.appendChild(groupDiv);
+            if (links.length > 1) {
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'grouped-duplicates';
+                groupDiv.innerHTML = `<h4>${links.length} link trùng: ${url}</h4>`;
+
+                const linksContainer = document.createElement('div');
+                linksContainer.className = 'duplicates-container';
+
+                links.forEach((link, index) => {
+                    const linkItem = createLinkItem(link, index);
+                    linksContainer.appendChild(linkItem);
+                });
+
+                groupDiv.appendChild(linksContainer);
+                listContainer.appendChild(groupDiv);
+            }
         });
     } else {
         linksToRender.forEach((link, index) => {
-            const item = createLinkItem(link, index);
-            fragment.appendChild(item);
+            const linkItem = createLinkItem(link, index);
+            listContainer.appendChild(linkItem);
         });
     }
-    container.appendChild(fragment);
+
+    if (!document.getElementById('link-list-style')) {
+        const style = document.createElement('style');
+        style.id = 'link-list-style';
+        style.innerHTML = `
+            .list-header {
+                padding: 10px 15px;
+                background: #f5f5f5;
+                border-bottom: 1px solid #ddd;
+                margin-bottom: 10px;
+            }
+            .search-info, .filter-info {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .search-info i, .filter-info i {
+                color: #666;
+            }
+            .result-count {
+                margin-left: auto;
+                background: #e0e0e0;
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-size: 0.9em;
+            }
+            .clear-search-btn {
+                background: none;
+                border: none;
+                color: #007bff;
+                cursor: pointer;
+                padding: 2px 5px;
+            }
+            .clear-search-btn:hover {
+                text-decoration: underline;
+            }
+            .link-list-container {
+                min-height: 200px;
+            }
+            .empty-message {
+                text-align: center;
+                padding: 40px 20px;
+                color: #666;
+            }
+            .empty-message i {
+                font-size: 40px;
+                margin-bottom: 15px;
+                color: #ccc;
+            }
+            .grouped-duplicates {
+                margin-bottom: 20px;
+                border: 1px solid #eee;
+                border-radius: 5px;
+                overflow: hidden;
+            }
+            .grouped-duplicates h4 {
+                background: #f9f9f9;
+                padding: 8px 15px;
+                margin: 0;
+                font-size: 14px;
+                color: #555;
+            }
+            .duplicates-container {
+                padding: 10px;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
     updateCounters();
 }
-
-
 
 function createLinkItem(link, index) {
     const item = document.createElement('div');
@@ -848,58 +844,73 @@ function createLinkItem(link, index) {
     item.dataset.id = link.id;
 
     const postTypeLabel = link.post_type ? `[${link.post_type.toUpperCase()}] ` : '';
-    const displayTitle = link.status === 'login' ? 'Yêu cầu đăng nhập' : (link.title || link.url);
-    const displayDescription = link.status === 'login' ? 'Bài viết hạn chế yêu cầu đăng nhập để xem nội dung' : (link.description || '');
+    const displayTitle = link.title || link.url;
+    const displayDescription = link.description || '';
     const indexStr = (index + 1).toString();
     const indexDigits = indexStr.split('').map(digit => `<span>${digit}</span>`).join('');
 
     item.innerHTML = `
-            <input type="checkbox" class="link-checkbox" ${link.checked ? 'checked' : ''}>
-            <div class="link-row">
-                <button class="link-index" title="Xóa link này">
-                    ${indexDigits}
-                </button>
-                <div class="link-thumbnail">
-                    ${link.image ? `<img src="${link.image}" alt="Thumbnail" loading="lazy">` : `<i class="fas fa-link fa-icon"></i>`}
-                </div>
-                <div class="link-content">
-                    <div class="link-title post-type-${link.post_type}">${postTypeLabel}${displayTitle}</div>
-                    <div class="link-description">${displayDescription}</div>
-                    <div class="link-meta">
-                        <span class="link-time">${link.note ? `<span class="note-text">${link.note}</span>` : formatDateTime(link.date)}</span>
-                        <span class="link-status status-${link.blacklistStatus === 'blacklisted' ? 'blacklist' : link.status}">
-                            ${link.blacklistStatus === 'blacklisted' ? '<span class="blacklist-text">Blacklist</span>' :
-            link.status === 'success' ? 'Thành công' :
-                link.status === 'login' ? 'Yêu cầu đăng nhập' :
-                    link.status === 'link_hỏng' ? 'Link hỏng' :
-                        link.status === 'error' ? 'Lỗi' : 'Không xác định'}
-                        </span>
-                    </div>
-                </div>
-                <div class="link-actions">
-                    <button class="action-btn view-post" title="Xem bài viết"><i class="fas fa-eye"></i></button>
-                    <button class="action-btn note" title="Ghi chú"><i class="fas fa-comment-alt"></i></button>
-                    ${link.blacklistStatus === 'active' ? `<button class="action-btn block" title="Chặn"><i class="fas fa-ban"></i></button>` : `<button class="action-btn unblock" title="Khôi phục"><i class="fas fa-undo"></i></button>`}
+        <input type="checkbox" class="link-checkbox" ${link.checked ? 'checked' : ''}>
+        <div class="link-row">
+            <button class="link-index" title="Xóa link này">
+                ${indexDigits}
+            </button>
+            <div class="link-thumbnail">
+                <div class="thumbnail-wrapper">
+                    ${link.status === 'iframe'
+            ? `<iframe src="${link.image}" width="100" height="100" style="border:none;overflow:hidden" scrolling="no" frameborder="0" allowfullscreen="true" loading="lazy"></iframe>`
+            : link.image
+                ? `<img src="${link.image}" alt="Thumbnail" loading="lazy">`
+                : `<i class="fas fa-link fa-icon"></i>`
+        }
+                    <div class="thumbnail-overlay"></div>
                 </div>
             </div>
-        `;
+            <div class="link-content">
+                <div class="link-title post-type-${link.post_type}">${postTypeLabel}${displayTitle}</div>
+                <div class="link-description">${displayDescription}</div>
+                <div class="link-meta">
+                    <span class="link-time">${link.note ? `<span class="note-text">${link.note}</span>` : formatDateTime(link.date)}</span>
+                    <span class="link-status status-${link.blacklistStatus === 'blacklisted' ? 'blacklist' : link.status}">
+                        ${link.blacklistStatus === 'blacklisted' ? '<span class="blacklist-text">Blacklist</span>' :
+            link.status === 'success' ? 'Thành công' :
+                link.status === 'iframe' ? 'Hiển thị iframe' :
+                    link.status === 'login' ? 'Yêu cầu đăng nhập' :
+                        link.status === 'link_hỏng' ? 'Link hỏng' :
+                            link.status === 'error' ? 'Lỗi' : 'Không xác định'}
+                    </span>
+                </div>
+            </div>
+            <div class="link-actions">
+                <button class="action-btn view-post" title="Xem bài viết"><i class="fas fa-eye"></i></button>
+                <button class="action-btn note" title="Ghi chú"><i class="fas fa-comment-alt"></i></button>
+                ${link.blacklistStatus === 'active' ? `<button class="action-btn block" title="Chặn"><i class="fas fa-ban"></i></button>` : `<button class="action-btn unblock" title="Khôi phục"><i class="fas fa-undo"></i></button>`}
+            </div>
+        </div>
+    `;
 
+    // Sự kiện checkbox
     item.querySelector('.link-checkbox').addEventListener('change', () => toggleCheckbox(link));
+
+    // Sự kiện nhấp vào thumbnail
     item.querySelector('.link-thumbnail').addEventListener('click', (e) => {
         e.stopPropagation();
+        e.preventDefault();
         toggleCheckbox(link);
     });
+
+    // Sự kiện nhấp vào nội dung (khôi phục hành vi mở URL)
     item.querySelector('.link-content').addEventListener('click', (e) => {
         e.stopPropagation();
         if (!link.checked) {
-            // Nếu checkbox chưa được chọn: Bật checkbox và mở URL
             toggleCheckbox(link);
             window.open(link.url, '_blank');
         } else {
-            // Nếu checkbox đã được chọn: Tắt checkbox
             toggleCheckbox(link);
         }
     });
+
+    // Sự kiện nút xóa
     item.querySelector('.link-index').addEventListener('click', () => {
         if (confirm(`Xóa link: ${link.url}?`)) {
             saveBackup('deleteLinks', { links: [{ ...link }] });
@@ -911,6 +922,8 @@ function createLinkItem(link, index) {
             addLog(`Đã xóa link ${link.url} (ID: ${link.id})`, 'info');
         }
     });
+
+    // Các sự kiện khác
     item.querySelector('.view-post').addEventListener('click', () => showLinkDetailsPopup(link));
     item.querySelector('.note').addEventListener('click', () => showNoteDialog(link));
     item.querySelector('.block')?.addEventListener('click', () => {
@@ -1146,6 +1159,9 @@ function showSelectionActionsDialog(count) {
                     <button id="export-gist" class="btn btn-primary">
                         <i class="fas fa-code-branch"></i> Xuất Gist
                     </button>
+                    <button id="export-url" class="btn btn-primary">
+                        <i class="fas fa-link"></i> Xuất URL
+                    </button>
                     ` : ''}
                     <button id="unselect-all" class="btn btn-secondary">
                         <i class="fas fa-times"></i> Bỏ chọn
@@ -1168,7 +1184,18 @@ function showSelectionActionsDialog(count) {
 
     if (state.currentTab !== 'fanpage') {
         dialog.querySelector('#export-gist').addEventListener('click', () => {
-            exportToGist();
+            const selectedLinks = state.links.filter(l => l.checked);
+            exportToGist(selectedLinks);
+            document.body.removeChild(dialog);
+        });
+
+        dialog.querySelector('#export-url').addEventListener('click', () => {
+            const selectedLinks = state.links.filter(l => l.checked);
+            if (selectedLinks.length === 0) {
+                showToast('Vui lòng chọn ít nhất một link để xuất URL', 'warning');
+                return;
+            }
+            exportUrlsToGist(selectedLinks);
             document.body.removeChild(dialog);
         });
     }
@@ -1232,199 +1259,179 @@ function showNoteDialog(link) {
 }
 
 function showAddLinkDialog() {
-    // Gắn CSS nếu chưa có
-    if (!document.getElementById('add-link-dialog-style')) {
-        const style = document.createElement('style');
-        style.id = 'add-link-dialog-style';
-        style.innerHTML = `
-            .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.4);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: flex-start; /* Đưa popup sát trên */
-            z-index: 9999;
-            padding-top: 10px; /* Khoảng cách nhỏ phía trên */
-        }
-
-        .modal-dialog {
-            background: #fff;
-            border-radius: 8px;
-            width: 500px;
-            max-width: 90%;
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
-            overflow: hidden;
-            animation: fadeIn 0.3s ease;
-            margin-top: 10px; /* đẩy xuống 1 chút nếu cần */
-        }
-
-
-            .modal-header {
-                padding: 12px 16px;
-                background: #f5f5f5;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                border-bottom: 1px solid #ddd;
-            }
-
-            .modal-header h3 {
-                margin: 0;
-                font-size: 18px;
-            }
-
-            .modal-close {
-                background: transparent;
-                border: none;
-                font-size: 20px;
-                cursor: pointer;
-            }
-
-            .modal-body {
-                padding: 16px;
-            }
-
-            .modal-textarea {
-                width: 100%;
-                height: 150px;
-                padding: 10px;
-                border-radius: 6px;
-                border: 1px solid #ccc;
-                font-size: 14px;
-                box-sizing: border-box;
-                resize: vertical;
-            }
-
-            .modal-actions {
-                display: flex;
-                justify-content: space-between;
-                gap: 10px;
-                margin-top: 15px;
-            }
-
-            .btn {
-                padding: 8px 12px;
-                border: none;
-                border-radius: 6px;
-                cursor: pointer;
-                font-size: 14px;
-                flex: 1;
-            }
-
-            .btn-primary {
-                background-color: #007bff;
-                color: white;
-            }
-
-            .btn-secondary {
-                background-color: #e0e0e0;
-                color: black;
-            }
-
-            @keyframes fadeIn {
-                from { opacity: 0; transform: scale(0.95); }
-                to { opacity: 1; transform: scale(1); }
-            }
-        `;
-        document.head.appendChild(style);
-    }
-
-    // Tạo hộp thoại
     const dialog = document.createElement('div');
     dialog.className = 'modal-overlay';
     dialog.innerHTML = `
-        <div class="modal-dialog">
-            <div class="modal-header">
-                <h3>Thêm danh sách link</h3>
-                <button class="modal-close">×</button>
+    <div class="modal-dialog" style="width: 420px; padding-top: 20px;">
+        <div class="modal-header">
+            <h3>Nhập danh sách link</h3>
+            <button class="modal-close">×</button>
+        </div>
+        <div class="modal-body">
+            <div class="input-row" style="margin-bottom: 12px;">
+                <textarea id="new-links-input"
+                          class="modal-textarea"
+                          placeholder="URL mỗi dòng..."
+                          style="width: 100%; height: 60px; resize: none; padding: 6px; font-size: 13px;"></textarea>
             </div>
-            <div class="modal-body">
-                <textarea id="new-links-input" class="modal-textarea" placeholder="Nhập danh sách URL (mỗi URL trên một dòng)..."></textarea>
-                <div class="modal-actions">
-                    <button id="import-json-lines" class="btn btn-secondary"><i class="fas fa-file-import"></i> Item</button>
-                    <button id="import-json-array" class="btn btn-secondary"><i class="fas fa-file-import"></i> All</button>
-                    <button id="add-links-confirm" class="btn btn-primary">Thêm</button>
-                    <button id="add-links-cancel" class="btn btn-secondary">Hủy</button>
-                </div>
+
+            <div class="config-row" style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                <label style="width: 100px; font-size: 14px;">GitHub Token:</label>
+                <input type="text" id="github-token-input" value="${config.githubToken}" style="flex: 1; padding: 6px; font-size: 13px;">
+                <button id="confirm-token-btn" class="btn" style="width: 60px; padding: 6px 0; font-size: 13px;">Lưu</button>
+            </div>
+
+            <div class="config-row" style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                <label style="width: 100px; font-size: 14px;">Gist ID:</label>
+                <input type="text" id="github-id-input" value="${config.fanpageGistUrl?.split('/').pop() || ''}" style="flex: 1; padding: 6px; font-size: 13px;">
+                <button id="confirm-id-btn" class="btn" style="width: 60px; padding: 6px 0; font-size: 13px;">Lưu</button>
+            </div>
+
+            <div class="action-buttons" style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
+                <button id="add-links-confirm" class="btn btn-add">Thêm</button>
+                <button id="import-json-lines" class="btn btn-item">Item</button>
+                <button id="import-json-array" class="btn btn-all">All</button>
+                <button id="filter-keyword-btn" class="btn btn-block">Block</button>
+                <button id="add-links-cancel" class="btn btn-cancel">Huỷ</button>
             </div>
         </div>
+    </div>
+   <style>
+.modal-dialog {
+    max-height: 80vh;
+    overflow-y: auto;
+    margin-top: 5px;
+}
+.config-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 5px; /* 👈 giảm khoảng cách */
+}
+.config-row label {
+    width: 100px;
+    font-size: 13px;
+}
+.config-row input {
+    flex: 1;
+    padding: 5px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 13px;
+}
+.config-row button {
+    width: 60px;
+    padding: 5px 0;
+    font-size: 13px;
+}
+
+#new-links-input {
+    margin-bottom: 5px; /* 👈 khoảng cách dưới textarea */
+    padding: 5px;
+    font-size: 13px;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 6px;
+    margin-top: 5px; /* 👈 giảm khoảng cách trước các nút */
+    flex-wrap: wrap;
+}
+.action-buttons .btn {
+    flex: 1;
+    padding: 6px;
+    font-size: 13px;
+    font-weight: bold;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.btn-add    { background-color: #28a745; color: white; }
+.btn-item   { background-color: #17a2b8; color: white; }
+.btn-all    { background-color: #007bff; color: white; }
+.btn-block  { background-color: #ffc107; color: black; }
+.btn-cancel { background-color: #dc3545; color: white; }
+.btn:hover  { opacity: 0.9; }
+
+.modal-body > * {
+    margin-top: 0;
+    margin-bottom: 5px; /* 👈 mọi thành phần cách nhau 5px */
+}
+</style>
     `;
+
     document.body.appendChild(dialog);
 
-    const textarea = dialog.querySelector('#new-links-input');
-    const confirmBtn = dialog.querySelector('#add-links-confirm');
-    const cancelBtn = dialog.querySelector('#add-links-cancel');
-    const closeBtn = dialog.querySelector('.modal-close');
-    const importJsonLinesBtn = dialog.querySelector('#import-json-lines');
-    const importJsonArrayBtn = dialog.querySelector('#import-json-array');
+    // Các sự kiện nút
+    dialog.querySelector('#confirm-token-btn').onclick = () => {
+        const token = dialog.querySelector('#github-token-input').value.trim();
+        if (token) {
+            config.githubToken = token;
+            localStorage.setItem('githubToken', token);
+            showToast('Đã lưu token', 'success');
+        }
+    };
 
-    confirmBtn.addEventListener('click', () => {
-        const urls = textarea.value.trim().split('\n').map(url => url.trim()).filter(url => url);
-        if (urls.length === 0) {
-            showToast('Vui lòng nhập ít nhất một URL', 'warning');
+    dialog.querySelector('#confirm-id-btn').onclick = () => {
+        const id = dialog.querySelector('#github-id-input').value.trim();
+        if (id) {
+            config.fanpageGistUrl = `https://api.github.com/gists/${id}`;
+            localStorage.setItem('fanpageGistUrl', config.fanpageGistUrl);
+            showToast('Đã lưu Gist ID', 'success');
+        }
+    };
+
+    dialog.querySelector('#add-links-cancel').onclick = () => document.body.removeChild(dialog);
+    dialog.querySelector('.modal-close').onclick = () => document.body.removeChild(dialog);
+    dialog.querySelector('#filter-keyword-btn').onclick = () => showFilterKeywordsPopup();
+
+    dialog.querySelector('#import-json-lines').onclick = () => {
+        importLinksFromJsonLines();
+        document.body.removeChild(dialog);
+    };
+    dialog.querySelector('#import-json-array').onclick = () => {
+        importFromJSON();
+        document.body.removeChild(dialog);
+    };
+
+    dialog.querySelector('#add-links-confirm').onclick = () => {
+        const urls = dialog.querySelector('#new-links-input').value.trim().split('\n').map(l => l.trim()).filter(Boolean);
+        const filteredUrls = filterByKeywords(urls);
+        if (filteredUrls.length === 0) {
+            showToast('Không có link nào sau lọc', 'warning');
             return;
         }
 
-        let addedCount = 0;
-        const newLinks = [];
-        urls.forEach(url => {
-            if (!isValidUrl(url)) {
-                showToast(`URL không hợp lệ: ${url}`, 'warning');
-                return;
+        filteredUrls.forEach(url => {
+            if (!isLinkExists(url)) {
+                const newLink = {
+                    id: generateId(),
+                    url,
+                    title: 'Đang xử lý...',
+                    description: '',
+                    image: '',
+                    status: 'pending',
+                    post_type: determinePostType(url),
+                    date: new Date().toISOString(),
+                    checked: false,
+                    blacklistStatus: 'active',
+                    note: ''
+                };
+                state.links.unshift(newLink);
+                setTimeout(() => extractContent(url), 0);
+                addLog(`Đã thêm link: ${url}`, 'info');
             }
-            if (isLinkExists(url)) {
-                showToast(`Link đã tồn tại: ${url}`, 'warning');
-                return;
-            }
-
-            const newLink = {
-                id: generateId(),
-                url,
-                title: 'Đang trích xuất...',
-                description: '',
-                image: '',
-                status: 'pending',
-                post_type: determinePostType(url),
-                date: new Date().toISOString(),
-                checked: false,
-                blacklistStatus: 'active',
-                note: ''
-            };
-            state.links.unshift(newLink);
-            newLinks.push(newLink);
-            addedCount++;
-            setTimeout(() => extractContent(url), 0);
-            addLog(`Đã thêm link: ${url} (ID: ${newLink.id})`, 'info');
         });
 
-        if (addedCount > 0) {
-            saveBackup('addLinks', { links: newLinks });
-            saveData({ links: true });
-            renderTabContent(state.currentTab);
-            updateCounters();
-            showToast(`Đã thêm ${addedCount} link mới`, 'success');
-        }
+        saveData({ links: true });
+        renderTabContent(state.currentTab);
+        updateCounters();
+        showToast(`Đã thêm ${filteredUrls.length} link`, 'success');
         document.body.removeChild(dialog);
-    });
-
-    importJsonLinesBtn.addEventListener('click', () => {
-        importLinksFromJsonLines();
-        document.body.removeChild(dialog);
-    });
-
-    importJsonArrayBtn.addEventListener('click', () => {
-        importFromJSON();
-        document.body.removeChild(dialog);
-    });
-
-    cancelBtn.addEventListener('click', () => document.body.removeChild(dialog));
-    closeBtn.addEventListener('click', () => document.body.removeChild(dialog));
+    };
 }
+
 
 
 function deleteSelected() {
@@ -1494,34 +1501,22 @@ async function extractContent(url) {
     const link = state.links.find(l => l.url === url);
     if (!link) return;
 
-    const tryExtract = async (useProxy = false) => {
+    const tryExtract = async () => {
         try {
             const startTime = Date.now();
-            const fetchUrl = useProxy ? `${config.corsProxy}${encodeURIComponent(url)}` : url;
-            const headers = useProxy ? {} : {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            };
+            const fetchUrl = `${config.corsProxy}${encodeURIComponent(url)}`;
 
             const response = await fetch(fetchUrl, {
-                headers,
                 signal: AbortSignal.timeout(config.requestTimeout)
             });
 
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-            let htmlContent;
-            if (useProxy) {
-                const proxyData = await response.json();
-                htmlContent = proxyData.contents;
-            } else {
-                htmlContent = await response.text();
-            }
-
+            const proxyData = await response.json();
+            const htmlContent = proxyData.contents;
             if (!htmlContent) throw new Error('Không có nội dung trả về');
 
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(htmlContent, 'text/html');
-
+            const doc = new DOMParser().parseFromString(htmlContent, 'text/html');
             const title = doc.querySelector('title')?.textContent || '';
             const ogTitle = doc.querySelector('meta[property="og:title"]')?.getAttribute('content') || '';
             const ogDesc = doc.querySelector('meta[property="og:description"]')?.getAttribute('content') || '';
@@ -1534,86 +1529,60 @@ async function extractContent(url) {
                 htmlContent,
                 processingTime: Date.now() - startTime
             };
-        } catch (error) {
-            throw error;
+        } catch (err) {
+            throw err;
         }
     };
 
     try {
-        const result = await tryExtract(false);
+        const result = await tryExtract();
 
         link.title = result.title;
         link.description = result.description;
         link.image = result.image;
         link.post_type = link.post_type && link.post_type !== 'unknown' ? link.post_type : determinePostType(url);
-
-        if (link.description || link.image !== config.defaultImage) {
-            link.status = 'success';
-        } else {
-            if (result.htmlContent.toLowerCase().includes('login')) {
-                link.status = 'login';
-                link.title = 'Yêu cầu đăng nhập';
-                link.description = 'Bài viết hạn chế yêu cầu đăng nhập để xem nội dung';
-            } else if (result.htmlContent.toLowerCase().includes('content not found') ||
-                result.htmlContent.toLowerCase().includes('unavailable') ||
-                result.htmlContent.toLowerCase().includes('removed')) {
-                link.status = 'link_hỏng';
-                link.title = 'Bài viết lỗi';
-                link.description = 'Không có nội dung';
-            } else {
-                link.status = 'error';
-                link.title = 'Bài viết lỗi';
-                link.description = 'Không có nội dung';
-            }
-        }
-
         link.processingTime = result.processingTime;
-        addLog(`Đã trích xuất thành công: ${url} (ID: ${link.id})`, 'success');
-    } catch (error) {
-        addLog(`Lỗi khi trích xuất trực tiếp ${url} (ID: ${link.id}): ${error.message}, thử lại với proxy...`, 'warning');
-        try {
-            const result = await tryExtract(true);
 
-            link.title = result.title;
-            link.description = result.description;
-            link.image = result.image;
-            link.post_type = link.post_type && link.post_type !== 'unknown' ? link.post_type : determinePostType(url);
+        const html = result.htmlContent.toLowerCase();
 
-            if (link.description || link.image !== config.defaultImage) {
-                link.status = 'success';
-            } else {
-                if (result.htmlContent.toLowerCase().includes('login')) {
-                    link.status = 'login';
-                    link.title = 'Yêu cầu đăng nhập';
-                    link.description = 'Bài viết hạn chế yêu cầu đăng nhập để xem nội dung';
-                } else if (result.htmlContent.toLowerCase().includes('content not found') ||
-                    result.htmlContent.toLowerCase().includes('unavailable') ||
-                    result.htmlContent.toLowerCase().includes('removed')) {
-                    link.status = 'link_hỏng';
-                    link.title = 'Bài viết lỗi';
-                    link.description = 'Không có nội dung';
-                } else {
-                    link.status = 'error';
-                    link.title = 'Bài viết lỗi';
-                    link.description = 'Không có nội dung';
-                }
-            }
-
-            link.processingTime = result.processingTime;
-            addLog(`Đã trích xuất thành công qua proxy: ${url} (ID: ${link.id})`, 'success');
-        } catch (proxyError) {
+        // Kiểm tra nếu ảnh là icon-loi.jpg hoặc chứa facebook.com/plugins/
+        if (link.image === config.defaultImage || link.image.includes('facebook.com/plugins/')) {
+            link.status = 'iframe';
+            link.image = `https://www.facebook.com/plugins/post.php?href=${encodeURIComponent(url)}&width=300&show_text=true`;
+        }
+        else if (link.description || link.image !== config.defaultImage) {
+            link.status = 'success';
+        } else if (html.includes('login')) {
+            link.status = 'login';
+            link.title = 'Yêu cầu đăng nhập';
+            link.description = 'Bài viết hạn chế yêu cầu đăng nhập để xem nội dung';
+        } else if (html.includes('content not found') || html.includes('unavailable') || html.includes('removed')) {
+            link.status = 'link_hỏng';
             link.title = 'Bài viết lỗi';
             link.description = 'Không có nội dung';
-            link.image = config.defaultImage;
+        } else {
             link.status = 'error';
-            link.post_type = link.post_type && link.post_type !== 'unknown' ? link.post_type : determinePostType(url);
-            addLog(`Lỗi khi xử lý ${url} (ID: ${link.id}) qua proxy: ${proxyError.message}`, 'error');
+            link.title = 'Bài viết lỗi';
+            link.description = 'Không có nội dung';
         }
+
+        addLog(`Đã trích xuất thành công: ${url} (ID: ${link.id})`, 'success');
+    } catch (error) {
+        link.title = 'Bài viết lỗi';
+        link.description = 'Không có nội dung';
+        link.image = config.defaultImage;
+        link.status = 'iframe'; // Fallback sang iframe khi lỗi
+        link.post_type = link.post_type && link.post_type !== 'unknown' ? link.post_type : determinePostType(url);
+
+        addLog(`Lỗi khi trích xuất qua proxy ${url} (ID: ${link.id}): ${error.message}`, 'error');
     } finally {
         saveData({ links: true });
         renderTabContent(state.currentTab);
     }
 }
+
+
+
 function deleteSelectedFanpages() {
     const selectedFanpages = state.fanpages.filter(f => f.checked);
     if (selectedFanpages.length === 0) {
@@ -1635,120 +1604,216 @@ function deleteSelectedFanpages() {
     }
 }
 
-function showFilterPopup(callback) {
-    console.log('Showing filter popup');
+// Hàm loại bỏ dấu tiếng Việt
+function removeVietnameseTones(str) {
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d").replace(/Đ/g, "D");
+}
+function showSearchResultsPopup(searchQuery) {
+    // Lưu searchQuery và đặt trạng thái để lọc toàn cục
+    state.dateFilter.searchQuery = searchQuery;
+    state.currentTab = 'filter';
+    state.currentFilter = 'all';
+
     const popup = document.createElement('div');
-    popup.className = 'modal-overlay filter-popup';
+    popup.className = 'modal-overlay search-results-popup';
     popup.innerHTML = `
         <div class="modal-dialog">
             <div class="modal-header">
-                <h3>Chọn Bộ Lọc</h3>
+                <h3>Kết quả tìm kiếm: "${searchQuery}"</h3>
                 <button class="modal-close">×</button>
             </div>
             <div class="modal-body">
-                <div class="filter-buttons">
-                    <button class="filter-btn" data-filter="all">Tất cả</button>
-                    <button class="filter-btn" data-filter="group">Group</button>
-                    <button class="filter-btn" data-filter="photo">Photo</button>
-                    <button class="filter-btn" data-filter="story">Story</button>
-                    <button class="filter-btn" data-filter="video">Video</button>
-                    <button class="filter-btn" data-filter="reel">Reel</button>
-                    <button class="filter-btn" data-filter="post">Post</button>
-                    <button class="filter-btn" data-filter="profile">Profile</button>
-                    <button class="filter-btn" data-filter="duplicate">Trùng lặp</button>
-                    <button class="filter-btn" data-filter="blacklist">Blacklist</button>
-                    <button class="filter-btn" data-filter="note">Ghi chú</button>
-                </div>
+                <div class="search-results-container"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="apply-search-filter" class="btn btn-primary">
+                    Áp dụng bộ lọc này
+                </button>
+                <button id="close-search-popup" class="btn btn-secondary">
+                    Đóng
+                </button>
             </div>
         </div>
         <style>
-            .modal-overlay {
-                position: fixed;
-                top: 0; left: 0; right: 0; bottom: 0;
-                background: rgba(0,0,0,0.5);
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                z-index: 1000;
-            }
-            .modal-dialog {
-                background: white;
-                border-radius: 8px;
+            .search-results-popup .modal-dialog {
                 width: 90%;
-                max-width: 400px;
+                max-width: 800px;
                 max-height: 80vh;
+                display: flex;
+                flex-direction: column;
+            }
+            .search-results-popup .modal-body {
+                flex: 1;
                 overflow-y: auto;
+                padding: 15px;
             }
-            .modal-header {
-                padding: 12px 16px;
-                border-bottom: 1px solid #eee;
+            .search-results-container {
                 display: flex;
-                justify-content: space-between;
-                align-items: center;
+                flex-direction: column;
+                gap: 10px;
             }
-            .modal-header h3 {
-                margin: 0;
-                font-size: 18px;
+            .search-results-container .link-item {
+                border: 1px solid #eee;
+                border-radius: 5px;
+                padding: 10px;
             }
-            .modal-close {
-                background: none;
-                border: none;
-                font-size: 20px;
-                cursor: pointer;
-            }
-            .modal-body {
-                padding: 16px;
-            }
-            .filter-buttons {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-            }
-            .filter-btn {
-                flex: 1 0 30%;
-                padding: 8px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                background: #f5f5f5;
-                cursor: pointer;
-                text-align: center;
-            }
-            .filter-btn:hover {
-                background: #e0e0e0;
-            }
+            
         </style>
     `;
 
-    try {
-        document.body.appendChild(popup);
-        console.log('Popup appended to body');
-    } catch (error) {
-        console.error('Error appending popup:', error);
-        addLog('Lỗi khi hiển thị popup lọc', 'error');
+    document.body.appendChild(popup);
+
+    // Lấy kết quả tìm kiếm
+    const results = getLinksForCurrentTab();
+    console.log('Popup - Search query:', searchQuery, 'Links:', results); // Debug
+
+    const resultsContainer = popup.querySelector('.search-results-container');
+
+    if (results.length === 0) {
+        resultsContainer.innerHTML = `
+            <div class="no-results" style="text-align: center; padding: 40px 0;">
+                <i class="fas fa-search" style="font-size: 40px; color: #ccc;"></i>
+                <p>Không tìm thấy kết quả phù hợp</p>
+            </div>
+        `;
+    } else {
+        results.forEach((link, index) => {
+            const linkItem = createLinkItem(link, index); // Dùng createLinkItem
+            resultsContainer.appendChild(linkItem);
+        });
     }
 
-    const closePopup = () => {
-        try {
-            document.body.removeChild(popup);
-            console.log('Popup removed');
-        } catch (error) {
-            console.error('Error removing popup:', error);
-        }
-    };
-
-    popup.querySelector('.modal-close').addEventListener('click', closePopup);
-    popup.addEventListener('click', (e) => {
-        if (e.target === popup) closePopup();
+    // Xử lý sự kiện nút Áp dụng bộ lọc
+    popup.querySelector('#apply-search-filter').addEventListener('click', () => {
+        state.dateFilter.searchQuery = searchQuery;
+        state.currentTab = 'filter';
+        state.currentFilter = 'all';
+        saveData({ dateFilter: true });
+        renderTabContent('filter');
+        document.body.removeChild(popup);
+        showToast(`Đã áp dụng bộ lọc tìm kiếm: "${searchQuery}"`, 'success');
     });
 
+    // Xử lý sự kiện nút Đóng
+    popup.querySelector('#close-search-popup').addEventListener('click', () => {
+        document.body.removeChild(popup);
+    });
+
+    popup.querySelector('.modal-close').addEventListener('click', () => {
+        document.body.removeChild(popup);
+    });
+
+    popup.addEventListener('click', (e) => {
+        if (e.target === popup) {
+            document.body.removeChild(popup);
+        }
+    });
+}
+
+function showFilterPopup() {
+    const popup = document.createElement('div');
+    popup.className = 'modal-overlay filter-popup';
+    popup.innerHTML = `
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>Chọn Bộ Lọc</h3>
+        <button class="modal-close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="search-box">
+          <input type="text" id="filter-search-input" 
+                 placeholder="Tìm kiếm theo tiêu đề/nội dung..."
+                 value="${state.dateFilter.searchQuery || ''}">
+          <button id="filter-search-btn"><i class="fas fa-search"></i></button>
+        </div>
+        <div class="filter-buttons">
+          <button class="filter-btn ${state.currentFilter === 'all' ? 'active' : ''}" 
+                  data-filter="all">Tất cả</button>
+          <button class="filter-btn ${state.currentFilter === 'group' ? 'active' : ''}" 
+                  data-filter="group">Group</button>
+          <button class="filter-btn ${state.currentFilter === 'photo' ? 'active' : ''}" 
+                  data-filter="photo">Photo</button>
+          <button class="filter-btn ${state.currentFilter === 'story' ? 'active' : ''}" 
+                  data-filter="story">Story</button>
+          <button class="filter-btn ${state.currentFilter === 'video' ? 'active' : ''}" 
+                  data-filter="video">Video</button>
+          <button class="filter-btn ${state.currentFilter === 'reel' ? 'active' : ''}" 
+                  data-filter="reel">Reel</button>
+          <button class="filter-btn ${state.currentFilter === 'post' ? 'active' : ''}" 
+                  data-filter="post">Post</button>
+          <button class="filter-btn ${state.currentFilter === 'iframe' ? 'active' : ''}" 
+                  data-filter="iframe">Iframe</button>
+          <button class="filter-btn ${state.currentFilter === 'duplicate' ? 'active' : ''}" 
+                  data-filter="duplicate">Trùng lặp</button>
+          <button class="filter-btn ${state.currentFilter === 'blacklist' ? 'active' : ''}" 
+                  data-filter="blacklist">Blacklist</button>
+          <button class="filter-btn ${state.currentFilter === 'note' ? 'active' : ''}" 
+                  data-filter="note">Ghi chú</button>
+          <button class="filter-btn ${state.currentFilter === 'success' ? 'active' : ''}" 
+                  data-filter="success">Thành công</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+    document.body.appendChild(popup);
+
+    const closePopup = () => {
+        if (document.body.contains(popup)) {
+            document.body.removeChild(popup);
+        }
+    };
+    popup.querySelector('.modal-close').addEventListener('click', closePopup);
+    popup.addEventListener('click', (e) => e.target === popup && closePopup());
+
+    const searchInput = popup.querySelector('#filter-search-input');
+    const searchBtn = popup.querySelector('#filter-search-btn');
+
+    if (searchBtn) {
+        searchBtn.addEventListener('click', () => {
+            const query = searchInput.value.trim();
+            if (query) {
+                showSearchResultsPopup(query);
+                closePopup();
+            } else {
+                showToast('Vui lòng nhập từ khóa tìm kiếm', 'warning');
+            }
+        });
+    }
+
+    if (searchInput) {
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const query = searchInput.value.trim();
+                if (query) {
+                    showSearchResultsPopup(query);
+                    closePopup();
+                } else {
+                    showToast('Vui lòng nhập từ khóa tìm kiếm', 'warning');
+                }
+            }
+        });
+    }
+
     popup.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const filter = btn.dataset.filter;
-            console.log('Filter selected:', filter);
-            callback(filter);
+        btn.addEventListener('click', function () {
+            state.currentFilter = this.dataset.filter;
+            state.dateFilter.searchQuery = '';
+            saveData({ currentFilter: true, dateFilter: true });
+            renderTabContent(state.currentTab);
             closePopup();
         });
     });
+
+    const exportBtn = popup.querySelector('.export-btn');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', () => {
+            const filteredLinks = state.links.filter(l => l.status === 'success');
+            exportLinksToGoogleSheets(filteredLinks);
+            closePopup();
+        });
+    }
 }
 
 function setupEventListeners() {
@@ -1841,49 +1906,7 @@ function renderTabContent(tab) {
     container.innerHTML = '';
 
     if (tab === 'all-link') {
-        let filteredLinks = [];
-        switch (state.currentFilter) {
-            case 'group':
-                filteredLinks = state.links.filter(l => l.post_type === 'group' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'photo':
-                filteredLinks = state.links.filter(l => l.post_type === 'photo' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'story':
-                filteredLinks = state.links.filter(l => l.post_type === 'story' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'video':
-                filteredLinks = state.links.filter(l => l.post_type === 'video' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'reel':
-                filteredLinks = state.links.filter(l => l.post_type === 'reel' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'post':
-                filteredLinks = state.links.filter(l => l.post_type === 'post' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'profile':
-                filteredLinks = state.links.filter(l => l.post_type === 'profile' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'duplicate':
-                const urlGroups = {};
-                state.links.forEach(l => {
-                    if (!urlGroups[l.url]) urlGroups[l.url] = [];
-                    urlGroups[l.url].push(l);
-                });
-                filteredLinks = Object.values(urlGroups)
-                    .filter(group => group.length > 1 && group.every(l => l.blacklistStatus !== 'blacklisted'))
-                    .flat();
-                break;
-            case 'blacklist':
-                filteredLinks = state.links.filter(l => l.blacklistStatus === 'blacklisted');
-                break;
-            case 'note':
-                filteredLinks = state.links.filter(l => l.note && l.note.trim() !== '');
-                break;
-            default:
-                filteredLinks = state.links;
-        }
-
+        const filteredLinks = getLinksForCurrentTab();
         if (filteredLinks.length === 0) {
             container.innerHTML = '<p>Không có link nào phù hợp.</p>';
         } else if (state.currentFilter === 'duplicate') {
@@ -1892,7 +1915,6 @@ function renderTabContent(tab) {
                 if (!urlGroups[l.url]) urlGroups[l.url] = [];
                 urlGroups[l.url].push(l);
             });
-
             Object.entries(urlGroups).forEach(([url, links]) => {
                 const groupDiv = document.createElement('div');
                 groupDiv.className = 'grouped-duplicates';
@@ -1917,70 +1939,112 @@ function renderTabContent(tab) {
         const filterButtons = document.createElement('div');
         filterButtons.className = 'filter-buttons';
         filterButtons.innerHTML = `
-                <style>
-                    .counter-badge {
-                        padding: 6px 12px;
-                        margin: 4px;
-                        border: 1px solid #ccc;
-                        border-radius: 6px;
-                        background-color: #f5f5f5;
-                        color: #333;
-                        font-size: 14px;
-                        cursor: pointer;
-                        transition: all 0.2s ease;
-                        min-width: 80px;
-                        text-align: center;
-                    }
-                    .counter-badge:hover {
-                        background-color: #e0e0e0;
-                        border-color: #888;
-                    }
-                    .search-filter {
-                        display: flex;
-                        margin-top: 10px;
-                        gap: 8px;
-                    }
-                    .search-filter input {
-                        flex: 1;
-                        padding: 6px 10px;
-                        border-radius: 4px;
-                        border: 1px solid #ccc;
-                    }
-                    .search-filter button {
-                        padding: 6px 12px;
-                        border: none;
-                        border-radius: 4px;
-                        background-color: #007bff;
-                        color: white;
-                        cursor: pointer;
-                    }
-                    .search-filter button:hover {
-                        background-color: #0056b3;
-                    }
-                </style>
-                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                    <button class="counter-badge group" data-filter="group">Group</button>
-                    <button class="counter-badge photo" data-filter="photo">Photo</button>
-                    <button class="counter-badge story" data-filter="story">Story</button>
-                    <button class="counter-badge video" data-filter="video">Video</button>
-                    <button class="counter-badge reel" data-filter="reel">Reel</button>
-                    <button class="counter-badge post" data-filter="post">Post</button>
-                    <button class="counter-badge profile" data-filter="profile">Profile</button>
-                    <button class="counter-badge duplicate" data-filter="duplicate">Trùng lặp</button>
-                    <button class="counter-badge blacklist" data-filter="blacklist">Blacklist</button>
-                    <button class="counter-badge note" data-filter="note">Ghi chú</button>
-                </div>
-                <div class="search-filter">
-                    <input type="text" id="search-filter" placeholder="Tìm tiêu đề/nội dung...">
-                    <button id="apply-search" class="btn">Tìm</button>
-                </div>
-            `;
+            <style>
+                .counter-badge {
+                    padding: 6px 12px;
+                    margin: 4px;
+                    border: 1px solid #ccc;
+                    border-radius: 6px;
+                    background-color: #f5f5f5;
+                    color: #333;
+                    font-size: 14px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    min-width: 80px;
+                    text-align: center;
+                }
+                .counter-badge:hover {
+                    background-color: #e0e0e0;
+                    border-color: #888;
+                }
+                .counter-badge.active {
+                    background-color: #007bff;
+                    color: white;
+                    border-color: #007bff;
+                }
+                .search-filter {
+                    display: flex;
+                    margin-top: 10px;
+                    gap: 8px;
+                }
+                .search-filter input {
+                    flex: 1;
+                    padding: 6px 10px;
+                    border-radius: 4px;
+                    border: 1px solid #ccc;
+                }
+                .search-filter button {
+                    padding: 6px 12px;
+                    border: none;
+                    border-radius: 4px;
+                    background-color: #007bff;
+                    color: white;
+                    cursor: pointer;
+                }
+                .search-filter button:hover {
+                    background-color: #0056b3;
+                }
+            </style>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                <button class="counter-badge group" data-filter="group">Group</button>
+                <button class="counter-badge photo" data-filter="photo">Photo</button>
+                <button class="counter-badge story" data-filter="story">Story</button>
+                <button class="counter-badge video" data-filter="video">Video</button>
+                <button class="counter-badge reel" data-filter="reel">Reel</button>
+                <button class="counter-badge post" data-filter="post">Post</button>
+                <button class="counter-badge duplicate" data-filter="duplicate">Trùng lặp</button>
+                <button class="counter-badge blacklist" data-filter="blacklist">Blacklist</button>
+                <button class="counter-badge note" data-filter="note">Ghi chú</button>
+            </div>
+            <div class="search-filter">
+                <input type="text" id="search-filter" placeholder="Tìm tiêu đề/nội dung..." value="${state.dateFilter.searchQuery || ''}">
+                <button id="apply-search" class="btn">Tìm</button>
+            </div>
+        `;
         container.appendChild(filterButtons);
 
         const filteredList = document.createElement('div');
         filteredList.className = 'filtered-list';
         container.appendChild(filteredList);
 
+        // Hàm renderFilteredLinks
+        function renderFilteredLinks(listContainer, filter) {
+            state.currentTab = 'filter'; // Đảm bảo tab filter được chọn
+            state.currentFilter = filter;
+            const filteredLinks = getLinksForCurrentTab();
+
+            listContainer.innerHTML = '';
+            if (filteredLinks.length === 0) {
+                listContainer.innerHTML = '<p>Không có link nào phù hợp.</p>';
+            } else if (filter === 'duplicate') {
+                const urlGroups = {};
+                filteredLinks.forEach(l => {
+                    if (!urlGroups[l.url]) urlGroups[l.url] = [];
+                    urlGroups[l.url].push(l);
+                });
+                Object.entries(urlGroups).forEach(([url, links]) => {
+                    const groupDiv = document.createElement('div');
+                    groupDiv.className = 'grouped-duplicates';
+                    groupDiv.innerHTML = `<h4>URL: ${url} (${links.length} link)</h4>`;
+                    const linksContainer = document.createElement('div');
+                    linksContainer.className = 'duplicates-container';
+                    links.forEach((link, index) => {
+                        const linkItem = createLinkItem(link, index);
+                        linksContainer.appendChild(linkItem);
+                    });
+                    groupDiv.appendChild(linksContainer);
+                    listContainer.appendChild(groupDiv);
+                });
+            } else {
+                filteredLinks.forEach((link, index) => {
+                    const linkItem = createLinkItem(link, index);
+                    listContainer.appendChild(linkItem);
+                });
+            }
+            updateCounters();
+        }
+
+        // Sự kiện cho nút lọc
         filterButtons.querySelectorAll('.counter-badge').forEach(button => {
             button.addEventListener('click', () => {
                 filterButtons.querySelectorAll('.counter-badge').forEach(btn => btn.classList.remove('active'));
@@ -1990,6 +2054,7 @@ function renderTabContent(tab) {
             });
         });
 
+        // Sự kiện cho tìm kiếm
         const searchInput = filterButtons.querySelector('#search-filter');
         const applySearch = filterButtons.querySelector('#apply-search');
         applySearch.addEventListener('click', () => {
@@ -1998,6 +2063,16 @@ function renderTabContent(tab) {
             renderFilteredLinks(filteredList, state.currentFilter);
         });
 
+        // Hỗ trợ nhấn Enter để tìm kiếm
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                state.dateFilter.searchQuery = searchInput.value.trim();
+                saveData({ dateFilter: true });
+                renderFilteredLinks(filteredList, state.currentFilter);
+            }
+        });
+
+        // Khởi tạo trạng thái ban đầu
         filterButtons.querySelector(`[data-filter="${state.currentFilter}"]`)?.classList.add('active');
         renderFilteredLinks(filteredList, state.currentFilter);
     } else if (tab === 'date-filter') {
@@ -2007,7 +2082,16 @@ function renderTabContent(tab) {
     } else if (tab === 'fanpage') {
         renderFanpageTab();
     } else {
-        renderLinks(tab);
+        const filteredLinks = getLinksForCurrentTab();
+        if (filteredLinks.length === 0) {
+            container.innerHTML = '<p>Không có link nào phù hợp.</p>';
+        } else {
+            filteredLinks.forEach((link, index) => {
+                const linkItem = createLinkItem(link, index);
+                container.appendChild(linkItem);
+            });
+        }
+        updateCounters();
     }
 }
 
@@ -2789,69 +2873,192 @@ async function handleGistOperation({ operation, fileName, dataType, data, proces
 }
 
 async function importLinksFromJsonLines() {
-    await handleGistOperation({
-        operation: 'import',
-        fileName: 'Jsonlink',
-        dataType: 'links',
-        processImport: async (items) => {
-            const newLinks = [];
-            for (const item of items) {
-                if (!isValidUrl(item.url)) continue;
-                const isErrorImage = item.image === config.defaultImage;
-                const newLink = {
-                    id: generateId(),
-                    url: item.url,
-                    title: isErrorImage ? 'Cần login để hiển thị' : (item.title || 'Chưa xử lý'),
-                    description: isErrorImage ? 'Yêu cầu đăng nhập bằng token' : (item.description || ''),
-                    image: item.image,
-                    status: isErrorImage ? 'login' : 'success',
-                    post_type: item.post_type || determinePostType(item.url),
-                    date: new Date().toISOString(),
-                    checked: item.checked || false,
-                    blacklistStatus: item.blacklistStatus || 'active',
-                    note: item.note || ''
-                };
-                state.links.unshift(newLink);
-                newLinks.push(newLink);
-                addLog(`Đã thêm link từ Jsonlink: ${item.url}`, 'success');
-            }
-            return newLinks;
+    try {
+        state.isLoading = true;
+        showToast('Đang tải danh sách link từ Jsonlink...', 'info');
+
+        const response = await fetch(config.fanpageGistUrl, { cache: 'no-cache' });
+        if (!response.ok) throw new Error(`Lỗi HTTP: ${response.status}`);
+        const gistData = await response.json();
+        const fileContent = gistData.files["Jsonlink"]?.content;
+
+        if (!fileContent) throw new Error("Không tìm thấy nội dung trong 'Jsonlink'");
+
+        const rawItems = fileContent
+            .split('\n')
+            .map((line, index) => {
+                try {
+                    if (!line.trim()) return null;
+                    return JSON.parse(line);
+                } catch (error) {
+                    console.warn(`Lỗi parsing JSON tại dòng ${index}: ${error.message}, dòng: ${line}`);
+                    return null;
+                }
+            })
+            .filter(Boolean);
+
+        const items = filterByKeywords(rawItems).filter(item =>
+            isValidUrl(item.url) && item.image && item.image.trim() !== ''
+        );
+
+        if (items.length === 0) {
+            showToast('Không có dòng JSON hợp lệ hoặc đã bị lọc', 'warning');
+            return;
         }
-    });
+
+        if (!confirm(`Bạn có chắc muốn nhập ${items.length} link từ Jsonlink?`)) {
+            showToast('Đã hủy nhập dữ liệu', 'warning');
+            return;
+        }
+
+        const newLinks = [];
+        for (const item of items) {
+            const isErrorImage = item.image === config.defaultImage || item.image.includes('facebook.com/plugins/');
+            const newLink = {
+                id: generateId(),
+                url: item.url,
+                title: item.title || 'Chưa xử lý',
+                description: item.description || '',
+                image: isErrorImage
+                    ? `https://www.facebook.com/plugins/post.php?href=${encodeURIComponent(item.url)}&width=300&show_text=true`
+                    : item.image,
+                status: isErrorImage ? 'iframe' : 'success',
+                post_type: item.post_type || determinePostType(item.url),
+                date: new Date().toISOString(),
+                checked: item.checked || false,
+                blacklistStatus: item.blacklistStatus || 'active',
+                note: item.note || ''
+            };
+            newLinks.push(newLink);
+        }
+
+        if (newLinks.length > 0) {
+            state.links.unshift(...newLinks);
+            saveBackup('addLinks', { links: newLinks });
+            await saveData({ links: true });
+            renderTabContent(state.currentTab);
+            updateCounters();
+            showToast(`Đã thêm ${newLinks.length} link từ Jsonlink`, 'success');
+        }
+
+        await clearGistFileContent(gistData.id, "Jsonlink");
+
+    } catch (error) {
+        showToast(`Lỗi khi nhập từ Jsonlink: ${error.message}`, 'danger');
+    } finally {
+        state.isLoading = false;
+    }
 }
 
-async function importFromJSON() {
-    await handleGistOperation({
-        operation: 'import',
-        fileName: 'Jsonalllink',
-        dataType: 'links',
-        processImport: async (items) => {
-            const newLinks = [];
-            for (const item of items) {
-                const trimmedUrl = item.url.trim();
-                if (!isValidUrl(trimmedUrl)) continue;
-                const isErrorImage = item.image === config.defaultImage;
-                const newLink = {
-                    id: generateId(),
-                    url: trimmedUrl,
-                    title: isErrorImage ? 'Cần login để hiển thị' : (item.title || 'Chưa xử lý'),
-                    description: isErrorImage ? 'Yêu cầu đăng nhập bằng token' : (item.description || ''),
-                    image: item.image,
-                    status: isErrorImage ? 'login' : 'success',
-                    post_type: item.post_type || determinePostType(trimmedUrl),
-                    date: new Date().toISOString(),
-                    checked: item.checked || false,
-                    blacklistStatus: item.blacklistStatus || 'active',
-                    note: item.note || ''
-                };
-                state.links.unshift(newLink);
-                newLinks.push(newLink);
-                addLog(`Đã thêm link từ Jsonalllink: ${trimmedUrl}`, 'success');
-            }
-            return newLinks;
+async function clearGistFileContent(gistId, fileName = "Jsonlink") {
+    try {
+        if (!gistId || !fileName) {
+            console.warn("Thiếu gistId hoặc tên file cần xoá nội dung");
+            return;
         }
-    });
+
+        // Lấy thông tin gist để xác minh tồn tại file
+        const getResponse = await fetch(`https://api.github.com/gists/${gistId}`, {
+            headers: {
+                'Authorization': `token ${config.githubToken}`,
+                'Accept': 'application/vnd.github+json'
+            }
+        });
+
+        if (!getResponse.ok) {
+            const errText = await getResponse.text();
+            console.error(`Không thể tải Gist: ${gistId}`, errText);
+            showToast(`Không thể tải Gist: ${gistId}`, 'danger');
+            return;
+        }
+
+        const gistData = await getResponse.json();
+        if (!gistData.files || !gistData.files[fileName]) {
+            console.warn(`Không tìm thấy file '${fileName}' trong Gist`);
+            showToast(`Không tìm thấy file '${fileName}' trong Gist`, 'warning');
+            return;
+        }
+
+        const patchResponse = await fetch(`https://api.github.com/gists/${gistId}`, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `token ${config.githubToken}`,
+                'Accept': 'application/vnd.github+json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                files: {
+                    [fileName]: {
+                        content: ''
+                    }
+                }
+            })
+        });
+
+        if (patchResponse.ok) {
+            showToast(`Đã xoá nội dung file '${fileName}' trong Gist`, 'success');
+            addLog(`Đã xoá nội dung file '${fileName}' trong Gist ID: ${gistId}`, 'info');
+        } else {
+            const errText = await patchResponse.text();
+            console.warn(`Không thể xoá nội dung '${fileName}':`, errText);
+            showToast(`Lỗi xoá nội dung '${fileName}': ${patchResponse.statusText}`, 'danger');
+            addLog(`Lỗi xoá nội dung file '${fileName}' trong Gist: ${patchResponse.statusText}`, 'error');
+        }
+
+    } catch (error) {
+        console.error(`Lỗi xoá nội dung file '${fileName}':`, error);
+        showToast(`Lỗi khi xoá nội dung '${fileName}': ${error.message}`, 'danger');
+        addLog(`Lỗi xoá nội dung '${fileName}' trong Gist: ${error.message}`, 'error');
+    }
 }
+
+async function exportUrlsToGist(links) {
+    try {
+        state.isLoading = true;
+        showToast('Đang xuất danh sách URL lên Gist...', 'info');
+
+        const content = links.map(link => link.url).join('\n'); // mỗi dòng 1 url
+
+        const { fanpageGistUrl: gistUrl, githubToken: token } = config;
+
+        if (!token || token === 'YOUR_GITHUB_TOKEN_HERE' || !(await validateGithubToken(token))) {
+            showToast('Token GitHub không hợp lệ', 'danger');
+            addLog('Lỗi token khi export URL lên Gist', 'error');
+            return;
+        }
+
+        const response = await fetchWithRetry(gistUrl, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github+json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                files: {
+                    'linkitemmmm': { content } // 🔥 file đơn giản, thuần text
+                }
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(`HTTP ${response.status}: ${errorData.message || 'Không thể cập nhật Gist'}`);
+        }
+
+        showToast(`Đã xuất ${links.length} URL lên Gist (link_urls.txt)`, 'success');
+        addLog(`Đã export ${links.length} URL lên Gist (link_urls.txt)`, 'success');
+    } catch (error) {
+        console.error('Lỗi export URL:', error);
+        showToast(`Lỗi khi export URL: ${error.message}`, 'danger');
+        addLog(`Lỗi khi export URL lên Gist: ${error.message}`, 'error');
+    } finally {
+        state.isLoading = false;
+    }
+}
+
+
+
 
 async function exportToGist() {
     const linksToExport = state.links.filter(link => link.checked).length > 0
@@ -2904,6 +3111,77 @@ async function exportFanpagesToJSON(fanpagesToExport = state.fanpages) {
     });
 }
 
+async function importFromJSON() {
+    try {
+        state.isLoading = true;
+        showToast('Đang tải danh sách link từ Jsonalllink...', 'info');
+
+        const response = await fetch(config.fanpageGistUrl, { cache: 'no-cache' });
+        if (!response.ok) throw new Error(`Lỗi HTTP: ${response.status}`);
+
+        const gistData = await response.json();
+        const fileContent = gistData.files["Jsonalllink"]?.content;
+
+        if (!fileContent) throw new Error("Không tìm thấy nội dung trong 'Jsonalllink'");
+
+        let data = JSON.parse(fileContent);
+        if (!Array.isArray(data)) throw new Error('Dữ liệu JSON không hợp lệ (phải là mảng object)');
+
+        const filteredData = filterByKeywords(data).filter(item =>
+            typeof item.url === 'string' &&
+            item.url.trim() !== '' &&
+            item.image &&
+            item.image.trim() !== ''
+        );
+
+        if (filteredData.length === 0) {
+            showToast('Không có link hợp lệ hoặc đã bị lọc', 'warning');
+            return;
+        }
+
+        if (!confirm(`Bạn có chắc muốn nhập ${filteredData.length} link từ Jsonalllink?`)) {
+            showToast('Đã hủy nhập dữ liệu', 'warning');
+            return;
+        }
+
+        const newLinks = [];
+        for (const item of filteredData) {
+            const url = item.url.trim();
+            const isErrorImage = item.image === config.defaultImage || item.image.includes('facebook.com/plugins/');
+            const newLink = {
+                id: generateId(),
+                url,
+                title: item.title || 'Chưa xử lý',
+                description: item.description || '',
+                image: isErrorImage
+                    ? `https://www.facebook.com/plugins/post.php?href=${encodeURIComponent(url)}&width=300&show_text=true`
+                    : item.image,
+                status: isErrorImage ? 'iframe' : 'success',
+                post_type: item.post_type || determinePostType(url),
+                date: new Date().toISOString(),
+                checked: item.checked || false,
+                blacklistStatus: item.blacklistStatus || 'active',
+                note: item.note || ''
+            };
+            state.links.unshift(newLink);
+            newLinks.push(newLink);
+        }
+
+        if (newLinks.length > 0) {
+            saveBackup('addLinks', { links: newLinks });
+            await saveData({ links: true });
+            renderTabContent('all-link');
+            updateCounters();
+            showToast(`Đã thêm ${newLinks.length} link từ Jsonalllink`, 'success');
+        }
+    } catch (error) {
+        showToast(`Lỗi khi import: ${error.message}`, 'danger');
+    } finally {
+        state.isLoading = false;
+    }
+}
+
+
 function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
@@ -2911,6 +3189,27 @@ function showToast(message, type = 'info') {
     document.body.appendChild(toast);
     setTimeout(() => document.body.removeChild(toast), config.toastDuration);
 }
+
+const dbName = "myAppData"; // Tên cơ sở dữ liệu
+const storeName = "dataStore"; // Tên object store
+
+// Mở hoặc tạo cơ sở dữ liệu
+const openDatabase = () => {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(dbName, 1);
+
+        // Nếu cơ sở dữ liệu không tồn tại, tạo mới với một store
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(storeName)) {
+                db.createObjectStore(storeName, { keyPath: "id", autoIncrement: true });
+            }
+        };
+
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject("Lỗi mở cơ sở dữ liệu");
+    });
+};
 
 async function loadData() {
     const showLoading = () => {
@@ -2923,71 +3222,69 @@ async function loadData() {
 
     const hideLoading = showLoading();
     try {
-        // Load dữ liệu từ IndexedDB
-        const [links, fanpages, logs, scrollPos, dateFilter, fanpageFilter, undoStack] = await Promise.all([
-            loadFromDB('links'),
-            loadFromDB('fanpages'),
-            loadFromDB('logs'),
-            dbOperation(config.storeNames.settings, 'get', 'scrollPosition'),
-            dbOperation(config.storeNames.settings, 'get', 'dateFilter'),
-            dbOperation(config.storeNames.settings, 'get', 'fanpageFilter'),
-            dbOperation(config.storeNames.settings, 'get', 'undoStack')
-        ]);
+        let savedData = null;
+        const db = await openDatabase();
+        const transaction = db.transaction(storeName, "readonly");
+        const store = transaction.objectStore(storeName);
 
-        // Cập nhật state
-        state.links = links || [];
-        state.fanpages = fanpages || [];
-        state.logs = logs || [];
-        state.scrollPosition = scrollPos?.value || 0;
-        state.dateFilter = dateFilter?.value || {
-            startDate: '',
-            endDate: '',
-            status: 'all',
-            groupTitles: false,
-            searchQuery: ''
-        };
-        state.fanpageFilter = fanpageFilter?.value || { currentPage: 1 };
-        state.undoStack = undoStack?.value || [];
+        // Lấy dữ liệu từ store
+        const request = store.get(1); // Giả sử chỉ có 1 bản ghi
+        savedData = await new Promise((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result ? request.result.data : null);
+            request.onerror = () => reject("Lỗi tải dữ liệu từ IndexedDB");
+        });
 
-        // Đảm bảo dữ liệu hợp lệ
-        state.links = state.links.map(link => ({
-            ...link,
-            post_type: link.post_type || 'unknown',
-            blacklistStatus: link.blacklistStatus || 'active',
-            checked: link.checked || false,
-            note: link.note || ''
-        }));
-
-        state.fanpages = state.fanpages.map(fanpage => ({
-            ...fanpage,
-            id: fanpage.id || generateId(),
-            url: fanpage.url || '',
-            name: fanpage.name || '',
-            status: fanpage.status || 'pending',
-            thumbnail: fanpage.thumbnail || config.defaultImage,
-            description: fanpage.description || ''
-        }));
+        if (savedData) {
+            state.links = savedData.links || [];
+            state.fanpages = savedData.fanpages || [];
+            state.logs = savedData.logs || [];
+            state.scrollPosition = savedData.scrollPosition || 0;
+            state.dateFilter = savedData.dateFilter || {
+                startDate: '',
+                endDate: '',
+                status: 'all',
+                groupTitles: false,
+                searchQuery: ''
+            };
+            state.fanpageFilter = savedData.fanpageFilter || { currentPage: 1 };
+            state.links = state.links.map(link => ({
+                ...link,
+                post_type: link.post_type || 'unknown',
+                blacklistStatus: link.blacklistStatus || 'active',
+                checked: link.checked || false,
+                note: link.note || ''
+            }));
+            state.fanpages = state.fanpages.map(fanpage => ({
+                ...fanpage,
+                id: fanpage.id || generateId(),
+                url: fanpage.url || '',
+                name: fanpage.name || '',
+                status: fanpage.status || 'pending',
+                thumbnail: fanpage.thumbnail || config.defaultImage,
+                description: fanpage.description || ''
+            }));
+        } else {
+            addLog('Không tìm thấy dữ liệu, sử dụng mặc định', 'warning');
+        }
 
         updateCounters();
         switchTab('all-link');
         if (elements.mainContent) {
             elements.mainContent.scrollTop = state.scrollPosition;
         }
-
-        addLog('Đã tải dữ liệu từ IndexedDB', 'info');
     } catch (error) {
         console.error('Lỗi tải dữ liệu:', error);
         showToast('Không thể tải dữ liệu, sử dụng mặc định', 'danger');
         state.links = [];
         state.fanpages = [];
-        state.logs = [];
         updateCounters();
         switchTab('all-link');
-        addLog(`Lỗi tải dữ liệu: ${error.message}`, 'error');
     } finally {
         hideLoading();
     }
 }
+
+
 async function showLinkDetailsPopup(link) {
     const popup = document.createElement('div');
     popup.className = 'modal-overlay';
@@ -3526,6 +3823,76 @@ function renderFanpageTab() {
     });
 
     updateSelectionBar(getFilteredFanpages(currentFilter));
+}
+// === BỔ SUNG MÃ ĐÃ CHỈNH SỬA ===
+function normalize(str) {
+    return str
+        .toLowerCase()
+        .normalize('NFD')                // Tách dấu ra khỏi ký tự
+        .replace(/[\u0300-\u036f]/g, '') // Loại bỏ dấu
+        .replace(/[\s\-_.]/g, '');       // Bỏ khoảng trắng, gạch nối, gạch dưới, chấm
+}
+
+function showFilterKeywordsPopup() {
+    const popup = document.createElement('div');
+    popup.className = 'modal-overlay';
+    popup.innerHTML = `
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3>Danh sách từ khóa lọc</h3>
+                <button class="modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <input type="text" id="filter-keyword-input" placeholder="Nhập từ khóa mới..." style="width: 100%; margin-bottom: 10px;">
+                <button id="save-filter-keyword" class="btn btn-primary">Lưu từ khóa</button>
+                <div id="filter-keywords-list" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(popup);
+
+    const input = popup.querySelector('#filter-keyword-input');
+    const saveBtn = popup.querySelector('#save-filter-keyword');
+    const listEl = popup.querySelector('#filter-keywords-list');
+
+    function renderKeywordList() {
+        listEl.innerHTML = '';
+        (state.filterKeywords || []).forEach((word, i) => {
+            const el = document.createElement('div');
+            el.innerHTML = `${word} <button data-index="${i}" class="btn btn-sm">X</button>`;
+            el.querySelector('button').onclick = () => {
+                state.filterKeywords.splice(i, 1);
+                localStorage.setItem('filterKeywords', JSON.stringify(state.filterKeywords));
+                renderKeywordList();
+            };
+            listEl.appendChild(el);
+        });
+    }
+
+    saveBtn.onclick = () => {
+        const newWord = input.value.trim();
+        if (newWord && !state.filterKeywords.includes(newWord)) {
+            state.filterKeywords.push(newWord);
+            localStorage.setItem('filterKeywords', JSON.stringify(state.filterKeywords));
+            input.value = '';
+            renderKeywordList();
+        }
+    };
+
+    popup.querySelector('.modal-close').onclick = () => document.body.removeChild(popup);
+    popup.onclick = e => e.target === popup && document.body.removeChild(popup);
+
+    state.filterKeywords = JSON.parse(localStorage.getItem('filterKeywords') || '[]');
+    renderKeywordList();
+}
+
+function filterByKeywords(urlsOrItems) {
+    const keywords = (state.filterKeywords || []).map(normalize);
+    return urlsOrItems.filter(item => {
+        const str = typeof item === 'string' ? item : JSON.stringify(item);
+        const normStr = normalize(str);
+        return !keywords.some(kw => normStr.includes(kw));
+    });
 }
 
 init();
