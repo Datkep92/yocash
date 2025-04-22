@@ -1773,3 +1773,34 @@ textarea.edit-fanpage-form-control {
         box-shadow: 0 0 0 2px #00000033;
         outline: 2px solid white;
     }
+
+.left-handed {
+    direction: rtl;
+    text-align: right;
+}
+.left-handed .headerBtns,
+.left-handed .tab-container {
+    display: flex;
+    justify-content: flex-start;
+}
+#toggle-handedness {
+    padding: 8px 12px;
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+#toggle-handedness:hover {
+    background: #0056b3;
+}
+.right-handed {
+    direction: ltr;
+    text-align: left;
+}
+.right-handed .headerBtns,
+.right-handed .tab-container {
+    display: flex;
+    justify-content: flex-end;
+}
+
