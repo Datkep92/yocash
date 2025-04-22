@@ -844,45 +844,43 @@ function renderDateFilterTab() {
 
 function renderLogs() {
     const container = elements.linkLists['log'];
-    if (!container) return;
-
+    if (!container) {
+        console.error('Không tìm thấy container cho tab log');
+        return;
+    }
     container.innerHTML = '';
-    if (state.logs.length === 0) {
-        container.innerHTML = `
-                <div class="empty-message" style="text-align: center; padding: 20px;">
-                    <i class="fas fa-clipboard-list" style="font-size: 24px; color: #666;"></i>
-                    <p>Không có log nào</p>
-                </div>`;
-    } else {
-        container.innerHTML = '<button class="clear-log-btn btn btn-danger" style="margin: 10px;"><i class="fas fa-trash"></i> Xóa Log</button>';
-        const fragment = document.createDocumentFragment();
-        state.logs.forEach(log => {
-            const logItem = document.createElement('div');
-            logItem.className = 'log-item';
-            logItem.innerHTML = `
-                    <div class="log-message">${log.message}</div>
-                    <div class="log-meta">
-                        <span class="log-type ${log.type}">${log.type}</span>
-                        <span>${formatDate(log.timestamp)}</span>
-                    </div>
-                `;
-            fragment.appendChild(logItem);
-        });
-        container.appendChild(fragment);
 
-        container.querySelector('.clear-log-btn').addEventListener('click', () => {
-            if (confirm('Xóa toàn bộ log?')) {
-                saveBackup('clearLogs', { logs: [...state.logs] });
-                state.logs = [];
-                saveData({ logs: true });
-                renderLogs();
-                showToast('Đã xóa log', 'success');
-                addLog('Đã xóa toàn bộ log', 'info');
-            }
+    // Thêm nút đổi tay trái/phải
+    const toggleButton = document.createElement('button');
+    toggleButton.id = 'toggle-handedness';
+    toggleButton.textContent = 'Đổi tay trái/phải';
+    toggleButton.className = 'btn';
+    toggleButton.style.marginBottom = '10px'; // Khoảng cách với danh sách log
+    container.appendChild(toggleButton);
+
+    // Sự kiện cho nút
+    toggleButton.addEventListener('click', () => {
+        const isLeftHanded = !localStorage.getItem('isLeftHanded') || localStorage.getItem('isLeftHanded') === 'false';
+        localStorage.setItem('isLeftHanded', isLeftHanded);
+        toggleHandedness(isLeftHanded);
+        addLog(`Chuyển chế độ: ${isLeftHanded ? 'Tay trái' : 'Tay phải'}`, 'info');
+    });
+
+    // Hiển thị danh sách log
+    if (state.logs.length === 0) {
+        container.innerHTML += '<p>Không có log nào.</p>';
+    } else {
+        state.logs.forEach((log, index) => {
+            const logItem = document.createElement('div');
+            logItem.className = `log-item log-${log.type}`;
+            logItem.innerHTML = `
+                <span class="log-time">[${new Date(log.time).toLocaleString()}]</span>
+                <span class="log-message">${log.message}</span>
+            `;
+            container.appendChild(logItem);
         });
     }
 }
-
 
 function showSelectionActionsDialog(count) {
     const dialog = document.createElement('div');
@@ -1344,12 +1342,34 @@ function setupEventListeners() {
 
 
 
-// Khởi tạo
+function toggleHandedness(isLeftHanded) {
+    document.body.classList.toggle('left-handed', isLeftHanded);
+    document.body.classList.toggle('right-handed', !isLeftHanded);
+}
+
+// Thêm nút vào header
+function addHandednessButton() {
+    const header = document.querySelector('.tab-container');
+    const button = document.createElement('button');
+    button.id = 'toggle-handedness';
+    button.textContent = 'Đổi tay trái/phải';
+    button.className = 'btn';
+    header.appendChild(button);
+
+    button.addEventListener('click', () => {
+        const isLeftHanded = !localStorage.getItem('isLeftHanded') || localStorage.getItem('isLeftHanded') === 'false';
+        localStorage.setItem('isLeftHanded', isLeftHanded);
+        toggleHandedness(isLeftHanded);
+    });
+}
+
 function init() {
     window.addEventListener('DOMContentLoaded', async () => {
         try {
             await loadData();
             setupEventListeners();
+            const isLeftHanded = localStorage.getItem('isLeftHanded') === 'true';
+            toggleHandedness(isLeftHanded); // Áp dụng chế độ đã lưu
             renderTabContent('all-link');
         } catch (error) {
             console.error('Lỗi khởi tạo:', error);
