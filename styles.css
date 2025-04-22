@@ -417,7 +417,9 @@ body {
 .tab-content {
     display: none;
 }
-
+.tab-content.active {
+    display: block;
+}
 /* Link list styles */
 .link-list {
     display: flex;
@@ -605,21 +607,45 @@ body {
 
 .link-status.status-login {
     color: #f39c12; /* Cam nhạt - Yêu cầu đăng nhập */
+font-weight: bold; /* Chữ đậm */
 }
 
 .link-status.status-link_hỏng {
     color: #7f8c8d; /* Xám đậm - Link hỏng */
 }
 
+.link-status.status-iframe {
+    color: #e91e63; /* Hồng đậm - Link hỏng */
+    font-weight: bold; /* Chữ đậm */
+}
+
+
 .link-status.status-error {
     color: #ff4d4f; /* Đỏ - Lỗi */
+font-weight: bold; /* Chữ đậm */
 }
 
 .link-status.status-blacklist .blacklist-text {
     color: #ff4d4f; /* Đỏ - Blacklist */
     font-weight: 600;
 }
+/* Thêm vào file CSS hoặc thẻ style */
+.filter-btn.iframe {
+    position: relative;
+}
+.filter-btn.iframe::after {
+    content: "🖼️";
+    margin-left: 5px;
+}
 
+.search-results-popup {
+    z-index: 1001;
+}
+.search-results-popup .modal-dialog {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
 /* Ghi chú */
 .note-text {
     color: #1877f2; /* Màu xanh dương để nổi bật */
@@ -1039,17 +1065,36 @@ body {
 /* Toast (Thông báo) */
 .toast {
     position: fixed;
-    bottom: 20px;
+    bottom: 20px; /* 👈 Hiển thị sát footer */
     right: 20px;
-    padding: 10px 20px;
+    max-width: 300px;
+    padding: 8px 16px;
     color: #fff;
-    border-radius: 4px;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.4;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
     z-index: 1000;
+
+    /* Hiệu ứng mượt */
+    opacity: 0;
+    transform: translateY(10px); /* Di chuyển từ dưới lên */
+    animation: toast-fade-in 0.4s ease-out forwards;
 }
+
+/* Hiệu ứng toast */
+@keyframes toast-fade-in {
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Màu sắc theo loại */
 .toast-success { background: #42b72a; }
 .toast-warning { background: #faad14; }
-.toast-danger { background: #ff4d4f; }
-.toast-info { background: #1877f2; }
+.toast-danger  { background: #ff4d4f; }
+.toast-info    { background: #1877f2; }
 
 /* Loading Popup */
 .loading {
@@ -1630,6 +1675,24 @@ textarea.edit-fanpage-form-control {
 .fanpage-type {
     margin-right: 8px;
 }
+
+/* Style cho thumbnail-wrapper và thumbnail-overlay */
+.thumbnail-wrapper {
+    position: relative;
+    width: 100px;
+    height: 100px;
+}
+
+.thumbnail-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    z-index: 10;
+}
+
 .fanpage-actions {
     display: flex;
     gap: 4px;
@@ -1649,3 +1712,64 @@ textarea.edit-fanpage-form-control {
 .fanpage-action-btn:hover {
     background: #e0e0e0;
 }
+
+.search-box {
+        display: flex;
+        margin-bottom: 10px;
+    }
+
+    .search-box input {
+        flex: 1;
+        padding: 6px 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px 0 0 4px;
+        font-size: 14px;
+    }
+
+    .search-box button {
+        background-color: #2196F3;
+        border: none;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 0 4px 4px 0;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    .search-box button:hover {
+        background-color: #1976D2;
+    }
+
+    .filter-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .filter-btn {
+        padding: 6px 12px;
+        border: none;
+        border-radius: 4px;
+        font-size: 13px;
+        cursor: pointer;
+        color: white;
+        transition: background-color 0.3s ease;
+    }
+
+    .filter-btn[data-filter="all"]       { background-color: #607D8B; }
+.filter-btn[data-filter="group"]     { background-color: #9C27B0; }
+.filter-btn[data-filter="photo"]     { background-color: #3F51B5; }
+.filter-btn[data-filter="story"]     { background-color: #009688; }
+.filter-btn[data-filter="video"]     { background-color: #FF5722; }
+.filter-btn[data-filter="reel"]      { background-color: #E91E63; }
+.filter-btn[data-filter="post"]      { background-color: #4CAF50; }
+.filter-btn[data-filter="profile"]   { background-color: #FFC107; color: black; }
+.filter-btn[data-filter="iframe"]    { background-color: #00BCD4; }
+.filter-btn[data-filter="duplicate"] { background-color: #795548; }
+.filter-btn[data-filter="blacklist"] { background-color: #F44336; }
+.filter-btn[data-filter="note"]      { background-color: #8BC34A; }
+.filter-btn[data-filter="success"]   { background-color: #4CAF50; }
+    .filter-btn.active {
+        box-shadow: 0 0 0 2px #00000033;
+        outline: 2px solid white;
+    }
