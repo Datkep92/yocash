@@ -531,6 +531,7 @@ function undoAction() {
 }
 
 function renderFilteredLinks(container, filter) {
+    console.log('renderFilteredLinks called with filter:', filter); // Debug
     container.innerHTML = '';
     state.currentFilter = filter;
     let filteredLinks = [];
@@ -554,8 +555,8 @@ function renderFilteredLinks(container, filter) {
         case 'post':
             filteredLinks = state.links.filter(l => l.post_type === 'post' && l.blacklistStatus !== 'blacklisted');
             break;
-        case 'profile':
-            filteredLinks = state.links.filter(l => l.post_type === 'profile' && l.blacklistStatus !== 'blacklisted');
+        case 'iframe':
+            filteredLinks = state.links.filter(l => l.status === 'iframe' && l.blacklistStatus !== 'blacklisted');
             break;
         case 'duplicate':
             const urlGroups = {};
@@ -573,14 +574,13 @@ function renderFilteredLinks(container, filter) {
         case 'note':
             filteredLinks = state.links.filter(l => l.note && l.note.trim() !== '');
             break;
-        case 'iframe':
-            filteredLinks = state.links.filter(l => l.status === 'iframe' && l.blacklistStatus !== 'blacklisted');
-            break;
         case 'success':
             filteredLinks = state.links.filter(l => l.status === 'success' && l.blacklistStatus !== 'blacklisted');
             break;
         default:
-            filteredLinks = state.links;
+            filteredLinks = state.links.filter(l => l.blacklistStatus !== 'blacklisted'); // Loại bỏ blacklist
+            state.currentFilter = 'group'; // Đặt lại filter mặc định
+            break;
     }
 
     const searchQuery = state.dateFilter.searchQuery.toLowerCase();
@@ -621,8 +621,6 @@ function renderFilteredLinks(container, filter) {
     }
     updateCounters();
 }
-
-
 
 function createLinkItem(link, index) {
     const item = document.createElement('div');
@@ -1083,108 +1081,185 @@ function showSearchResultsPopup(searchQuery) {
 }
 
 function showFilterPopup() {
+    // Xóa popup cũ để tránh trùng lặp sự kiện
+    const oldPopup = document.querySelector('.filter-modal-overlay');
+    if (oldPopup) {
+        oldPopup.remove();
+    }
+
     const popup = document.createElement('div');
-    popup.className = 'modal-overlay filter-popup';
+    popup.className = 'filter-modal-overlay';
     popup.innerHTML = `
-    <div class="modal-dialog">
-      <div class="modal-header">
+    <div class="filter-modal-dialog">
+      <div class="filter-modal-header">
         <h3>Chọn Bộ Lọc</h3>
-        <button class="modal-close">×</button>
+        <button class="filter-modal-close">×</button>
       </div>
-      <div class="modal-body">
-        <div class="search-box">
+      <div class="filter-modal-body">
+        <div class="filter-search-box">
           <input type="text" id="filter-search-input" 
                  placeholder="Tìm kiếm theo tiêu đề/nội dung..."
                  value="${state.dateFilter.searchQuery || ''}">
           <button id="filter-search-btn"><i class="fas fa-search"></i></button>
         </div>
-        <div class="filter-buttons">
-          <button class="filter-btn ${state.currentFilter === 'all' ? 'active' : ''}" 
-                  data-filter="all">Tất cả</button>
-          <button class="filter-btn ${state.currentFilter === 'group' ? 'active' : ''}" 
-                  data-filter="group">Group</button>
-          <button class="filter-btn ${state.currentFilter === 'photo' ? 'active' : ''}" 
-                  data-filter="photo">Photo</button>
-          <button class="filter-btn ${state.currentFilter === 'story' ? 'active' : ''}" 
-                  data-filter="story">Story</button>
-          <button class="filter-btn ${state.currentFilter === 'video' ? 'active' : ''}" 
-                  data-filter="video">Video</button>
-          <button class="filter-btn ${state.currentFilter === 'reel' ? 'active' : ''}" 
-                  data-filter="reel">Reel</button>
-          <button class="filter-btn ${state.currentFilter === 'post' ? 'active' : ''}" 
-                  data-filter="post">Post</button>
-          <button class="filter-btn ${state.currentFilter === 'iframe' ? 'active' : ''}" 
-                  data-filter="iframe">Iframe</button>
-          <button class="filter-btn ${state.currentFilter === 'duplicate' ? 'active' : ''}" 
-                  data-filter="duplicate">Trùng lặp</button>
-          <button class="filter-btn ${state.currentFilter === 'blacklist' ? 'active' : ''}" 
-                  data-filter="blacklist">Blacklist</button>
-          <button class="filter-btn ${state.currentFilter === 'note' ? 'active' : ''}" 
-                  data-filter="note">Ghi chú</button>
-          <button class="filter-btn ${state.currentFilter === 'success' ? 'active' : ''}" 
-                  data-filter="success">Thành công</button>
+        <div class="filter-buttons-container">
+          ${['group', 'photo', 'story', 'video', 'reel', 'post', 'iframe', 'duplicate', 'blacklist', 'note', 'success']
+            .map(filter => `
+            <button class="filter-btn ${state.currentFilter === filter ? 'active' : ''}" 
+                    data-filter="${filter}">
+              ${getFilterLabel(filter)}
+            </button>`).join('')}
         </div>
       </div>
     </div>
+    <style>
+      .filter-modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+      }
+      .filter-modal-dialog {
+        background: white;
+        border-radius: 8px;
+        width: 90%;
+        max-width: 500px;
+        max-height: 80vh;
+        overflow-y: auto;
+      }
+      .filter-modal-header {
+        padding: 15px;
+        border-bottom: 1px solid #eee;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .filter-modal-body {
+        padding: 15px;
+      }
+      .filter-search-box {
+        display: flex;
+        margin-bottom: 15px;
+      }
+      #filter-search-input {
+        flex: 1;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px 0 0 4px;
+      }
+      #filter-search-btn {
+        padding: 0 15px;
+        background: #f0f0f0;
+        border: 1px solid #ddd;
+        border-left: none;
+        border-radius: 0 4px 4px 0;
+        cursor: pointer;
+      }
+      .filter-buttons-container {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+      .filter-btn {
+        padding: 8px;
+        border: 1px solid #ddd;
+        background: #f9f9f9;
+        border-radius: 4px;
+        cursor: pointer;
+        text-align: center;
+      }
+      .filter-btn.active {
+        background: #007bff;
+        color: white;
+        border-color: #007bff;
+      }
+    </style>
   `;
 
     document.body.appendChild(popup);
 
+    // Hàm đóng popup
     const closePopup = () => {
         if (document.body.contains(popup)) {
             document.body.removeChild(popup);
         }
     };
-    popup.querySelector('.modal-close').addEventListener('click', closePopup);
+
+    // Sự kiện đóng popup
+    popup.querySelector('.filter-modal-close').addEventListener('click', closePopup);
     popup.addEventListener('click', (e) => e.target === popup && closePopup());
 
+    // Hàm lấy nhãn filter
+    function getFilterLabel(filter) {
+        const labels = {
+            'group': 'Group',
+            'photo': 'Photo',
+            'story': 'Story',
+            'video': 'Video',
+            'reel': 'Reel',
+            'post': 'Post',
+            'iframe': 'Iframe',
+            'duplicate': 'Trùng lặp',
+            'blacklist': 'Blacklist',
+            'note': 'Ghi chú',
+            'success': 'Thành công'
+        };
+        return labels[filter] || filter;
+    }
+
+    // Reset currentFilter nếu là 'all'
+    if (state.currentFilter === 'all') {
+        state.currentFilter = 'group';
+        saveData({ currentFilter: true });
+    }
+
+    // Xử lý tìm kiếm
     const searchInput = popup.querySelector('#filter-search-input');
     const searchBtn = popup.querySelector('#filter-search-btn');
 
-    if (searchBtn) {
+    if (searchBtn && searchInput) {
         searchBtn.addEventListener('click', () => {
             const query = searchInput.value.trim();
             if (query) {
-                showSearchResultsPopup(query);
+                state.dateFilter.searchQuery = query;
+                state.currentFilter = 'group'; // Mặc định lọc với 'group' khi tìm kiếm
+                saveData({ dateFilter: true, currentFilter: true });
+                switchTab('filter');
+                renderTabContent('filter');
                 closePopup();
             } else {
                 showToast('Vui lòng nhập từ khóa tìm kiếm', 'warning');
             }
         });
-    }
 
-    if (searchInput) {
         searchInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
-                const query = searchInput.value.trim();
-                if (query) {
-                    showSearchResultsPopup(query);
-                    closePopup();
-                } else {
-                    showToast('Vui lòng nhập từ khóa tìm kiếm', 'warning');
-                }
+                searchBtn.click();
             }
         });
     }
 
+    // Xử lý chọn filter
     popup.querySelectorAll('.filter-btn').forEach(btn => {
         btn.addEventListener('click', function () {
-            state.currentFilter = this.dataset.filter;
-            state.dateFilter.searchQuery = '';
-            saveData({ currentFilter: true, dateFilter: true });
-            renderTabContent(state.currentTab);
-            closePopup();
+            const filter = this.dataset.filter;
+            console.log('Filter applied:', filter, 'Tab:', state.currentTab); // Debug
+            if (filter) {
+                state.currentFilter = filter;
+                state.dateFilter.searchQuery = '';
+                saveData({ currentFilter: true, dateFilter: true });
+                switchTab('filter');
+                renderTabContent('filter');
+                closePopup();
+            }
         });
     });
-
-    const exportBtn = popup.querySelector('.export-btn');
-    if (exportBtn) {
-        exportBtn.addEventListener('click', () => {
-            const filteredLinks = state.links.filter(l => l.status === 'success');
-            exportLinksToGoogleSheets(filteredLinks);
-            closePopup();
-        });
-    }
 }
 
 function setupEventListeners() {
@@ -3353,6 +3428,14 @@ function renderTabContent(tab) {
         case 'log':
             renderLogs();
             break;
+        case 'filter':
+            const container = elements.linkLists['filter'];
+            if (!container) {
+                console.error('Không tìm thấy container cho tab filter');
+                return;
+            }
+            renderFilteredLinks(container, state.currentFilter);
+            break;
         default:
             renderLinks(tab);
             break;
@@ -3559,20 +3642,22 @@ function showNoteDialog(link) {
 
 function deleteSelected() {
     const selectedLinks = getLinksForCurrentTab().filter(link => link.checked);
+
+    // Xóa link được chọn nếu có checkbox
     if (selectedLinks.length > 0) {
         if (confirm(`Bạn có chắc muốn xóa ${selectedLinks.length} link đã chọn?`)) {
             saveBackup('deleteLinks', { links: selectedLinks });
             state.links = state.links.filter(link => !selectedLinks.includes(link));
             saveData({ links: true });
-            renderTabContent(state.currentTab); // Thêm để cập nhật giao diện
+            renderTabContent(state.currentTab);
             updateCounters();
             showToast(`Đã xóa ${selectedLinks.length} link`, 'success');
             addLog(`Đã xóa ${selectedLinks.length} link`, 'info');
         }
-        return;
+        return; // Thoát hàm sau khi xóa
     }
 
-    // Handle duplicate deletion
+    // Xử lý link trùng lặp nếu không có checkbox
     const urlGroups = {};
     state.links.forEach(l => {
         if (!urlGroups[l.url]) urlGroups[l.url] = [];
@@ -3592,7 +3677,7 @@ function deleteSelected() {
         saveBackup('deleteLinks', { links: duplicateLinks });
         state.links = state.links.filter(link => !duplicateLinks.includes(link));
         saveData({ links: true });
-        renderTabContent(state.currentTab); // Thêm để cập nhật giao diện
+        renderTabContent(state.currentTab);
         updateCounters();
         showToast(`Đã xóa ${duplicateLinks.length} link trùng lặp`, 'success');
         addLog(`Đã xóa ${duplicateLinks.length} link trùng lặp`, 'info');
@@ -3702,7 +3787,7 @@ async function extractContent(url) {
 // Refactored toggleSelectAll
 function toggleSelectAll() {
     if (state.currentTab === 'fanpage') {
-        const fanpagesToToggle = getFilteredFanpages(currentFilter);
+        const fanpagesToToggle = getFilteredFanpages(state.currentFilter || 'all');
         const allChecked = fanpagesToToggle.every(f => f.checked);
 
         saveBackup('selectAllFanpages', { fanpages: fanpagesToToggle });
@@ -3714,10 +3799,18 @@ function toggleSelectAll() {
         showToast(`Đã ${allChecked ? 'bỏ chọn' : 'chọn'} tất cả ${fanpagesToToggle.length} fanpage`, 'info');
         addLog(`Đã ${allChecked ? 'bỏ chọn' : 'chọn'} tất cả ${fanpagesToToggle.length} fanpage`, 'info');
     } else {
-        const linksToToggle = getLinksForCurrentTab();
+        let linksToToggle;
+        if (state.currentTab === 'filter') {
+            // Lấy danh sách link đã lọc theo state.currentFilter
+            linksToToggle = getFilteredLinksForFilterTab();
+        } else {
+            // Giữ logic cũ cho các tab khác
+            linksToToggle = getLinksForCurrentTab();
+        }
+
         const allChecked = linksToToggle.every(l => l.checked);
 
-        saveBackup('selectAll', { links: linksToToggle });
+        saveBackup('selectAll', { links: linksToToggle.map(l => ({ ...l })) });
         linksToToggle.forEach(link => {
             link.checked = !allChecked;
             updateLinkItem(link);
@@ -3725,12 +3818,80 @@ function toggleSelectAll() {
 
         saveData({ links: true });
         updateCounters();
-        addLog(`Đã ${allChecked ? 'bỏ chọn' : 'chọn'} tất cả ${linksToToggle.length} link trong tab ${state.currentTab}`, 'info');
+
+        showToast(`Đã ${allChecked ? 'bỏ chọn' : 'chọn'} ${linksToToggle.length} link`, 'info');
+        addLog(`Đã ${allChecked ? 'bỏ chọn' : 'chọn'} ${linksToToggle.length} link trong tab ${state.currentTab}`, 'info');
+
+        // Cập nhật giao diện
+        renderTabContent(state.currentTab);
 
         if (!allChecked && linksToToggle.length > 0) {
             showSelectionActionsDialog(linksToToggle.length);
         }
     }
+}
+
+// Hàm mới để lấy danh sách link đã lọc cho tab filter
+function getFilteredLinksForFilterTab() {
+    let filteredLinks = [];
+
+    switch (state.currentFilter) {
+        case 'group':
+            filteredLinks = state.links.filter(l => l.post_type === 'group' && l.blacklistStatus !== 'blacklisted');
+            break;
+        case 'photo':
+            filteredLinks = state.links.filter(l => l.post_type === 'photo' && l.blacklistStatus !== 'blacklisted');
+            break;
+        case 'story':
+            filteredLinks = state.links.filter(l => l.post_type === 'story' && l.blacklistStatus !== 'blacklisted');
+            break;
+        case 'video':
+            filteredLinks = state.links.filter(l => l.post_type === 'video' && l.blacklistStatus !== 'blacklisted');
+            break;
+        case 'reel':
+            filteredLinks = state.links.filter(l => l.post_type === 'reel' && l.blacklistStatus !== 'blacklisted');
+            break;
+        case 'post':
+            filteredLinks = state.links.filter(l => l.post_type === 'post' && l.blacklistStatus !== 'blacklisted');
+            break;
+        case 'iframe':
+            filteredLinks = state.links.filter(l => l.status === 'iframe' && l.blacklistStatus !== 'blacklisted');
+            break;
+        case 'duplicate':
+            const urlGroups = {};
+            state.links.forEach(l => {
+                if (!urlGroups[l.url]) urlGroups[l.url] = [];
+                urlGroups[l.url].push(l);
+            });
+            filteredLinks = Object.values(urlGroups)
+                .filter(group => group.length > 1 && group.every(l => l.blacklistStatus !== 'blacklisted'))
+                .flat();
+            break;
+        case 'blacklist':
+            filteredLinks = state.links.filter(l => l.blacklistStatus === 'blacklisted');
+            break;
+        case 'note':
+            filteredLinks = state.links.filter(l => l.note && l.note.trim() !== '');
+            break;
+        case 'success':
+            filteredLinks = state.links.filter(l => l.status === 'success' && l.blacklistStatus !== 'blacklisted');
+            break;
+        default:
+            filteredLinks = state.links.filter(l => l.blacklistStatus !== 'blacklisted');
+            state.currentFilter = 'group'; // Đặt lại filter mặc định
+            break;
+    }
+
+    // Áp dụng tìm kiếm nếu có
+    const searchQuery = state.dateFilter.searchQuery.toLowerCase();
+    if (searchQuery) {
+        filteredLinks = filteredLinks.filter(l =>
+            (l.title && l.title.toLowerCase().includes(searchQuery)) ||
+            (l.description && l.description.toLowerCase().includes(searchQuery))
+        );
+    }
+
+    return filteredLinks;
 }
 
 // Refactored showSettingsDialog
@@ -3885,6 +4046,69 @@ function showAddLinkDialog() {
         </div>
       </div>
     </div>
+     <style>
+    .modal-dialog {
+        max-height: 80vh;
+        overflow-y: auto;
+        margin-top: 5px;
+    }
+    .config-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 5px; /* 👈 giảm khoảng cách */
+    }
+    .config-row label {
+        width: 100px;
+        font-size: 13px;
+    }
+    .config-row input {
+        flex: 1;
+        padding: 5px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 13px;
+    }
+    .config-row button {
+        width: 60px;
+        padding: 5px 0;
+        font-size: 13px;
+    }
+
+    #new-links-input {
+        margin-bottom: 5px; /* 👈 khoảng cách dưới textarea */
+        padding: 5px;
+        font-size: 13px;
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 6px;
+        margin-top: 5px; /* 👈 giảm khoảng cách trước các nút */
+        flex-wrap: wrap;
+    }
+    .action-buttons .btn {
+        flex: 1;
+        padding: 6px;
+        font-size: 13px;
+        font-weight: bold;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .btn-add    { background-color: #28a745; color: white; }
+    .btn-item   { background-color: #17a2b8; color: white; }
+    .btn-all    { background-color: #007bff; color: white; }
+    .btn-block  { background-color: #ffc107; color: black; }
+    .btn-cancel { background-color: #dc3545; color: white; }
+    .btn:hover  { opacity: 0.9; }
+
+    .modal-body > * {
+        margin-top: 0;
+        margin-bottom: 5px; /* 👈 mọi thành phần cách nhau 5px */
+    }
+    </style>
   `;
 
     document.body.appendChild(dialog);
@@ -3956,6 +4180,7 @@ function showAddLinkDialog() {
             saveBackup('addLinks', { links: newLinks });
             saveData({ links: true });
             updateCounters();
+            renderTabContent(state.currentTab); // Thêm để render lại giao diện
             showToast(`Đã thêm ${newLinks.length} link`, 'success');
         }
         document.body.removeChild(dialog);
