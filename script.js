@@ -254,16 +254,6 @@ function isLinkExists(url) {
 
 
 
-function addLog(message, type = 'info') {
-    state.logs.unshift({
-        timestamp: Date.now(),
-        message,
-        type
-    });
-    if (state.logs.length > config.maxLogs) state.logs.pop();
-    saveData({ logs: true });
-    if (state.currentTab === 'log') renderTabContent('log');
-}
 
 function updateCounters() {
     const total = getLinksForCurrentTab().length;
@@ -409,84 +399,135 @@ function switchTab(tab) {
 }
 
 function getLinksForCurrentTab() {
-    let filteredLinks = state.links;
-
-    // Lọc theo tab hiện tại
     switch (state.currentTab) {
+        case 'all-link':
+            return state.links; // Không lọc blacklist, hiển thị tất cả link
+        case 'checked-link':
+            return state.links.filter(link => link.checked && !link.blacklistStatus);
+        case 'unchecked-link':
+            return state.links.filter(link => !link.checked && !link.blacklistStatus);
         case 'blacklist':
-            filteredLinks = filteredLinks.filter(l => l.blacklistStatus === 'blacklisted');
+            return state.links.filter(link => link.blacklistStatus);
+        default:
+            return state.links;
+    }
+}
+
+function undoAction() {
+    if (state.undoStack.length === 0) {
+        showToast('Không có hành động để hoàn tác', 'warning');
+        return;
+    }
+    const backup = state.undoStack.pop();
+    let needsSaveData = false;
+    let scrollToLinkId = null;
+    let switchToAllLink = false;
+
+    switch (backup.type) {
+        case 'addLinks':
+            state.links = state.links.filter(link => !backup.addedLinks.some(l => l.id === link.id));
+            needsSaveData = true;
+            switchToAllLink = true;
+            showToast(`Hoàn tác: Thêm ${backup.addedLinks.length} link`, 'success');
             break;
-        case 'error':
-            filteredLinks = filteredLinks.filter(l =>
-                ['error', 'login', 'link_hỏng'].includes(l.status) &&
-                l.blacklistStatus !== 'blacklisted'
-            );
+        case 'deleteLinks':
+            state.links.unshift(...backup.deletedLinks);
+            needsSaveData = true;
+            scrollToLinkId = backup.deletedLinks[0]?.id;
+            switchToAllLink = true;
+            showToast(`Hoàn tác: Xóa ${backup.deletedLinks.length} link`, 'success');
             break;
-        case 'duplicate':
-            const urlGroups = {};
-            state.links.forEach(l => {
-                const url = l.url;
-                if (!urlGroups[url]) urlGroups[url] = [];
-                urlGroups[url].push(l);
+        case 'checkbox':
+            const linkCheckbox = state.links.find(l => l.id === backup.linkId);
+            if (linkCheckbox) {
+                linkCheckbox.checked = backup.checked;
+                scrollToLinkId = linkCheckbox.id;
+                showToast(`Hoàn tác: Checkbox của link ${linkCheckbox.url.slice(0, 50)}...`, 'success');
+                updateLinkItem(linkCheckbox);
+            }
+            break;
+        case 'note':
+            const noteLink = state.links.find(l => l.id === backup.linkId);
+            if (noteLink) {
+                noteLink.note = backup.note;
+                scrollToLinkId = noteLink.id;
+                switchToAllLink = true;
+                showToast(`Hoàn tác: Ghi chú của link ${noteLink.url.slice(0, 50)}...`, 'success');
+                updateLinkItem(noteLink);
+            }
+            break;
+        case 'blacklist':
+            const blacklistLink = state.links.find(l => l.id === backup.linkId);
+            if (blacklistLink) {
+                blacklistLink.blacklistStatus = backup.blacklistStatus; // Khôi phục trạng thái
+                scrollToLinkId = blacklistLink.id;
+                needsSaveData = true;
+                showToast(`Hoàn tác: Trạng thái blacklist của link ${blacklistLink.url.slice(0, 50)}...`, 'success');
+                updateLinkItem(blacklistLink);
+            }
+            break;
+        case 'selectAll':
+            backup.checkedLinks.forEach(({ id, checked }) => {
+                const link = state.links.find(l => l.id === id);
+                if (link) {
+                    link.checked = checked;
+                    updateLinkItem(link);
+                }
             });
-            filteredLinks = Object.values(urlGroups)
-                .filter(group => group.length > 1)
-                .flat();
+            showToast('Hoàn tác: Chọn/bỏ chọn tất cả', 'success');
+            break;
+        case 'retryLink':
+            const retryLink = state.links.find(l => l.id === backup.linkId);
+            if (retryLink) {
+                Object.assign(retryLink, backup.linkState);
+                scrollToLinkId = retryLink.id;
+                needsSaveData = true;
+                showToast(`Hoàn tác: Thử lại link ${retryLink.url.slice(0, 50)}...`, 'success');
+                updateLinkItem(retryLink);
+            }
+            break;
+        case 'addFanpages':
+            state.fanpages = state.fanpages.filter(f => !backup.addedFanpages.some(f2 => f2.id === f.id));
+            needsSaveData = true;
+            showToast(`Hoàn tác: Thêm ${backup.addedFanpages.length} fanpage`, 'success');
+            break;
+        case 'refreshFanpage':
+            const fanpage = state.fanpages.find(f => f.id === backup.fanpage.id);
+            if (fanpage) {
+                Object.assign(fanpage, backup.fanpage);
+                needsSaveData = true;
+                showToast(`Hoàn tác: Làm mới fanpage ${fanpage.name}`, 'success');
+            }
+            break;
+        case 'editLink':
+            const editedLink = state.links.find(l => l.id === backup.linkId);
+            if (editedLink) {
+                editedLink.url = backup.url;
+                editedLink.image = backup.image;
+                editedLink.post_type = determinePostType(backup.url);
+                scrollToLinkId = editedLink.id;
+                needsSaveData = true;
+                showToast(`Hoàn tác: Chỉnh sửa link ${editedLink.url.slice(0, 50)}...`, 'success');
+                updateLinkItem(editedLink);
+            }
             break;
     }
 
-    // Lọc theo currentFilter (chỉ áp dụng cho tab all-link hoặc filter)
-    if (state.currentTab === 'all-link' || state.currentTab === 'filter') {
-        switch (state.currentFilter) {
-            case 'group':
-                filteredLinks = filteredLinks.filter(l => l.post_type === 'group' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'photo':
-                filteredLinks = filteredLinks.filter(l => l.post_type === 'photo' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'story':
-                filteredLinks = filteredLinks.filter(l => l.post_type === 'story' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'video':
-                filteredLinks = filteredLinks.filter(l => l.post_type === 'video' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'reel':
-                filteredLinks = filteredLinks.filter(l => l.post_type === 'reel' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'post':
-                filteredLinks = filteredLinks.filter(l => l.post_type === 'post' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'profile':
-                filteredLinks = filteredLinks.filter(l => l.post_type === 'profile' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'blacklist':
-                filteredLinks = filteredLinks.filter(l => l.blacklistStatus === 'blacklisted');
-                break;
-            case 'note':
-                filteredLinks = filteredLinks.filter(l => l.note && l.note.trim() !== '');
-                break;
-            case 'iframe':
-                filteredLinks = filteredLinks.filter(l => l.status === 'iframe' && l.blacklistStatus !== 'blacklisted');
-                break;
-            case 'success':
-                filteredLinks = filteredLinks.filter(l => l.status === 'success' && l.blacklistStatus !== 'blacklisted');
-                break;
-            default:
-                filteredLinks = filteredLinks.filter(l => l.blacklistStatus !== 'blacklisted');
-        }
-    }
+    if (needsSaveData) saveData({ links: true, fanpages: true });
+    updateCounters();
+    addLog(`Hoàn tác hành động: ${backup.type}`, 'info');
 
-    // Lọc theo searchQuery (nếu có)
-    if (state.dateFilter.searchQuery) {
-        const query = state.dateFilter.searchQuery.toLowerCase();
-        filteredLinks = filteredLinks.filter(l =>
-            (l.title && l.title.toLowerCase().includes(query)) ||
-            (l.description && l.description.toLowerCase().includes(query)) ||
-            (l.url && l.url.toLowerCase().includes(query))
-        );
-    }
+    // Render tab hiện tại, không cần chuyển tab cho blacklist
+    renderTabContent(state.currentTab);
 
-    return filteredLinks;
+    // Cuộn đến link nếu có
+    if (elements.mainContent && scrollToLinkId) {
+        setTimeout(() => {
+            const linkItem = document.querySelector(`.link-item[data-id="${scrollToLinkId}"]`);
+            if (linkItem) smoothScroll(elements.mainContent, linkItem.offsetTop);
+            else elements.mainContent.scrollTop = backup.scrollPosition || 0;
+        }, 100);
+    }
 }
 
 function renderFilteredLinks(container, filter) {
@@ -3281,6 +3322,20 @@ function deleteFanpage(fanpageId) {
     addLog(`Đã xóa fanpage ${fanpage.name} (ID: ${fanpage.id})`, 'info');
 }
 
+function addLog(message, type) {
+    const log = {
+        id: Date.now(),
+        message,
+        type,
+        timestamp: new Date().toLocaleString()
+    };
+    state.logs.unshift(log); // Thêm log mới vào đầu
+    if (state.logs.length > 20) {
+        state.logs = state.logs.slice(0, 20); // Giới hạn 20 log
+    }
+    saveData({ logs: true });
+}
+
 // Refactored renderTabContent to use update functions
 function renderTabContent(tab) {
     if (state.disableRender) {
@@ -3502,7 +3557,6 @@ function showNoteDialog(link) {
     closeBtn.addEventListener('click', () => document.body.removeChild(dialog));
 }
 
-// Refactored deleteSelected
 function deleteSelected() {
     const selectedLinks = getLinksForCurrentTab().filter(link => link.checked);
     if (selectedLinks.length > 0) {
@@ -3510,6 +3564,7 @@ function deleteSelected() {
             saveBackup('deleteLinks', { links: selectedLinks });
             state.links = state.links.filter(link => !selectedLinks.includes(link));
             saveData({ links: true });
+            renderTabContent(state.currentTab); // Thêm để cập nhật giao diện
             updateCounters();
             showToast(`Đã xóa ${selectedLinks.length} link`, 'success');
             addLog(`Đã xóa ${selectedLinks.length} link`, 'info');
@@ -3537,11 +3592,13 @@ function deleteSelected() {
         saveBackup('deleteLinks', { links: duplicateLinks });
         state.links = state.links.filter(link => !duplicateLinks.includes(link));
         saveData({ links: true });
+        renderTabContent(state.currentTab); // Thêm để cập nhật giao diện
         updateCounters();
         showToast(`Đã xóa ${duplicateLinks.length} link trùng lặp`, 'success');
         addLog(`Đã xóa ${duplicateLinks.length} link trùng lặp`, 'info');
     }
 }
+
 
 // Refactored retryLink
 function retryLink(id) {
@@ -3641,114 +3698,6 @@ async function extractContent(url) {
     }
 }
 
-// Refactored undoAction
-function undoAction() {
-    if (state.undoStack.length === 0) {
-        showToast('Không có hành động để hoàn tác', 'warning');
-        return;
-    }
-    const backup = state.undoStack.pop();
-    let needsSaveData = false;
-    let scrollToLinkId = null;
-
-    switch (backup.type) {
-        case 'addLinks':
-            state.links = state.links.filter(link => !backup.addedLinks.some(l => l.id === link.id));
-            needsSaveData = true;
-            showToast(`Hoàn tác: Thêm ${backup.addedLinks.length} link`, 'success');
-            break;
-        case 'deleteLinks':
-            state.links = [...state.links, ...backup.deletedLinks];
-            needsSaveData = true;
-            scrollToLinkId = backup.deletedLinks[0]?.id;
-            showToast(`Hoàn tác: Xóa ${backup.deletedLinks.length} link`, 'success');
-            break;
-        case 'checkbox':
-            const link = state.links.find(l => l.id === backup.linkId);
-            if (link) {
-                link.checked = backup.checked;
-                scrollToLinkId = link.id;
-                showToast(`Hoàn tác: Checkbox của link ${link.url.slice(0, 50)}...`, 'success');
-                updateLinkItem(link);
-            }
-            break;
-        case 'note':
-            const noteLink = state.links.find(l => l.id === backup.linkId);
-            if (noteLink) {
-                noteLink.note = backup.note;
-                scrollToLinkId = noteLink.id;
-                showToast(`Hoàn tác: Ghi chú của link ${noteLink.url.slice(0, 50)}...`, 'success');
-                updateLinkItem(noteLink);
-            }
-            break;
-        case 'blacklist':
-            const blacklistLink = state.links.find(l => l.id === backup.linkId);
-            if (blacklistLink) {
-                blacklistLink.blacklistStatus = backup.blacklistStatus;
-                scrollToLinkId = blacklistLink.id;
-                showToast(`Hoàn tác: Trạng thái blacklist của link ${blacklistLink.url.slice(0, 50)}...`, 'success');
-                updateLinkItem(blacklistLink);
-            }
-            break;
-        case 'selectAll':
-            backup.checkedLinks.forEach(({ id, checked }) => {
-                const link = state.links.find(l => l.id === id);
-                if (link) {
-                    link.checked = checked;
-                    updateLinkItem(link);
-                }
-            });
-            showToast('Hoàn tác: Chọn/bỏ chọn tất cả', 'success');
-            break;
-        case 'retryLink':
-            const retryLink = state.links.find(l => l.id === backup.linkId);
-            if (retryLink) {
-                Object.assign(retryLink, backup.linkState);
-                scrollToLinkId = retryLink.id;
-                needsSaveData = true;
-                showToast(`Hoàn tác: Thử lại link ${retryLink.url.slice(0, 50)}...`, 'success');
-                updateLinkItem(retryLink);
-            }
-            break;
-        case 'addFanpages':
-            state.fanpages = state.fanpages.filter(f => !backup.addedFanpages.some(f2 => f2.id === f.id));
-            needsSaveData = true;
-            showToast(`Hoàn tác: Thêm ${backup.addedFanpages.length} fanpage`, 'success');
-            break;
-        case 'refreshFanpage':
-            const fanpage = state.fanpages.find(f => f.id === backup.fanpage.id);
-            if (fanpage) {
-                Object.assign(fanpage, backup.fanpage);
-                needsSaveData = true;
-                showToast(`Hoàn tác: Làm mới fanpage ${fanpage.name}`, 'success');
-            }
-            break;
-        case 'editLink':
-            const editedLink = state.links.find(l => l.id === backup.linkId);
-            if (editedLink) {
-                editedLink.url = backup.url;
-                editedLink.image = backup.image;
-                editedLink.post_type = determinePostType(backup.url);
-                scrollToLinkId = editedLink.id;
-                needsSaveData = true;
-                showToast(`Hoàn tác: Chỉnh sửa link ${editedLink.url.slice(0, 50)}...`, 'success');
-                updateLinkItem(editedLink);
-            }
-            break;
-    }
-
-    if (needsSaveData) saveData({ links: true, fanpages: true });
-    updateCounters();
-    addLog(`Hoàn tác hành động: ${backup.type}`, 'info');
-
-    if (elements.mainContent && scrollToLinkId) {
-        setTimeout(() => {
-            const linkItem = document.querySelector(`.link-item[data-id="${scrollToLinkId}"]`);
-            if (linkItem) smoothScroll(elements.mainContent, linkItem.offsetTop);
-            else elements.mainContent.scrollTop = backup.scrollPosition || 0;
-        }, 100);
-    }
-}
 
 // Refactored toggleSelectAll
 function toggleSelectAll() {
