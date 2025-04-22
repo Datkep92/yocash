@@ -2876,123 +2876,71 @@ function deleteFanpage(fanpageId) {
     showToast(`Đã xóa fanpage ${fanpage.name}`, 'success');
     addLog(`Đã xóa fanpage ${fanpage.name} (ID: ${fanpage.id})`, 'info');
 }
-
-// Refactored renderLinks to use update functions
-function renderLinks(tab) {
-    const container = elements.linkLists[tab];
+function toggleTheme(isDarkTheme) {
+    document.body.classList.toggle('dark-theme', isDarkTheme);
+    document.body.classList.toggle('light-theme', !isDarkTheme);
+}
+function renderLogs() {
+    const container = elements.linkLists['log'];
     if (!container) {
-        console.error(`Không tìm thấy tab: ${tab}`);
+        console.error('Không tìm thấy container cho tab log');
         return;
     }
-
     container.innerHTML = '';
 
-    let linksToRender = getLinksForCurrentTab();
-    let searchQuery = '';
-    if (state.dateFilter.searchQuery) {
-        searchQuery = removeVietnameseTones(state.dateFilter.searchQuery.toLowerCase());
-        linksToRender = linksToRender.filter(link => {
-            const title = removeVietnameseTones((link.title || '').toLowerCase());
-            const description = removeVietnameseTones((link.description || '').toLowerCase());
-            return title.includes(searchQuery) || description.includes(searchQuery);
-        });
-    }
+    // Container cho các nút
+    const buttonContainer = document.createElement('div');
+    buttonContainer.style.display = 'flex';
+    buttonContainer.style.gap = '10px';
+    buttonContainer.style.marginBottom = '10px';
 
-    const header = document.createElement('div');
-    header.className = 'list-header';
+    // Nút đổi tay trái/phải
+    const handednessButton = document.createElement('button');
+    handednessButton.id = 'toggle-handedness';
+    handednessButton.textContent = 'Đổi tay trái/phải';
+    handednessButton.className = 'btn';
+    buttonContainer.appendChild(handednessButton);
 
-    if (searchQuery) {
-        header.innerHTML = `
-      <div class="search-info">
-        <i class="fas fa-search"></i>
-        <span>Kết quả tìm kiếm cho: "${state.dateFilter.searchQuery}"</span>
-        <span class="result-count">${linksToRender.length} kết quả</span>
-        <button class="clear-search-btn">Xóa tìm kiếm</button>
-      </div>
-    `;
+    // Nút đổi chế độ sáng/tối
+    const themeButton = document.createElement('button');
+    themeButton.id = 'toggle-theme';
+    themeButton.textContent = 'Chuyển sáng/tối';
+    themeButton.className = 'btn';
+    buttonContainer.appendChild(themeButton);
 
-        header.querySelector('.clear-search-btn').addEventListener('click', () => {
-            state.dateFilter.searchQuery = '';
-            saveData({ dateFilter: true });
-            renderTabContent(state.currentTab);
-        });
+    container.appendChild(buttonContainer);
+
+    // Sự kiện cho nút đổi tay trái/phải
+    handednessButton.addEventListener('click', () => {
+        const isLeftHanded = !localStorage.getItem('isLeftHanded') || localStorage.getItem('isLeftHanded') === 'false';
+        localStorage.setItem('isLeftHanded', isLeftHanded);
+        toggleHandedness(isLeftHanded);
+        addLog(`Chuyển chế độ: ${isLeftHanded ? 'Tay trái' : 'Tay phải'}`, 'info');
+    });
+
+    // Sự kiện cho nút đổi sáng/tối
+    themeButton.addEventListener('click', () => {
+        const isDarkTheme = !localStorage.getItem('isDarkTheme') || localStorage.getItem('isDarkTheme') === 'false';
+        localStorage.setItem('isDarkTheme', isDarkTheme);
+        toggleTheme(isDarkTheme);
+        addLog(`Chuyển chế độ: ${isDarkTheme ? 'Tối' : 'Sáng'}`, 'info');
+    });
+
+    // Hiển thị danh sách log
+    if (state.logs.length === 0) {
+        container.innerHTML += '<p>Không có log nào.</p>';
     } else {
-        const filterName = {
-            'all': 'Tất cả',
-            'group': 'Group',
-            'photo': 'Photo',
-            'story': 'Story',
-            'video': 'Video',
-            'reel': 'Reel',
-            'post': 'Post',
-            'duplicate': 'Trùng lặp',
-            'blacklist': 'Blacklist',
-            'note': 'Có ghi chú',
-            'iframe': 'Iframe',
-            'success': 'Thành công'
-        }[state.currentFilter] || '';
-
-        header.innerHTML = `
-      <div class="filter-info">
-        <i class="fas fa-filter"></i>
-        <span>${filterName}</span>
-        <span class="result-count">${linksToRender.length} kết quả</span>
-      </div>
-    `;
-    }
-
-    container.appendChild(header);
-
-    const listContainer = document.createElement('div');
-    listContainer.className = 'link-list-container';
-    container.appendChild(listContainer);
-
-    if (linksToRender.length === 0) {
-        listContainer.innerHTML = `
-      <div class="empty-message">
-        <i class="fas fa-exclamation-circle"></i>
-        <p>Không tìm thấy link nào phù hợp</p>
-        ${searchQuery ?
-                `<p>Với từ khóa: "${state.dateFilter.searchQuery}"</p>` :
-                `<p>Với bộ lọc hiện tại</p>`}
-      </div>
-    `;
-    } else if (tab === 'duplicate' || state.currentFilter === 'duplicate') {
-        const urlGroups = {};
-        linksToRender.forEach(l => {
-            const baseUrl = l.url.split('?')[0];
-            if (!urlGroups[baseUrl]) urlGroups[baseUrl] = [];
-            urlGroups[baseUrl].push(l);
-        });
-
-        Object.entries(urlGroups).forEach(([url, links]) => {
-            if (links.length > 1) {
-                const groupDiv = document.createElement('div');
-                groupDiv.className = 'grouped-duplicates';
-                groupDiv.innerHTML = `<h4>${links.length} link trùng: ${url}</h4>`;
-
-                const linksContainer = document.createElement('div');
-                linksContainer.className = 'duplicates-container';
-
-                links.forEach((link, index) => {
-                    const linkItem = createLinkItem(link, index);
-                    linksContainer.appendChild(linkItem);
-                });
-
-                groupDiv.appendChild(linksContainer);
-                listContainer.appendChild(groupDiv);
-            }
-        });
-    } else {
-        linksToRender.forEach((link, index) => {
-            const linkItem = createLinkItem(link, index);
-            listContainer.appendChild(linkItem);
+        state.logs.forEach((log, index) => {
+            const logItem = document.createElement('div');
+            logItem.className = `log-item log-${log.type}`;
+            logItem.innerHTML = `
+                <span class="log-time">[${new Date(log.time).toLocaleString()}]</span>
+                <span class="log-message">${log.message}</span>
+            `;
+            container.appendChild(logItem);
         });
     }
-
-    updateCounters();
 }
-
 
 
 // === BỔ SUNG MÃ ĐÃ CHỈNH SỬA ===
