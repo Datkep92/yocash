@@ -1803,4 +1803,66 @@ textarea.edit-fanpage-form-control {
     display: flex;
     justify-content: flex-end;
 }
+body.light-theme {
+    background: #ffffff;
+    color: #333333;
+}
 
+body.light-theme .tab-container {
+    background: #ffffff;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+body.light-theme .link-item, body.light-theme .log-item {
+    background: #f9f9f9;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+body.light-theme .btn {
+    background: #007bff;
+    color: white;
+}
+
+body.dark-theme {
+    background: #1a1a1a;
+    color: #e0e0e0;
+}
+
+body.dark-theme .tab-container {
+    background: #2c2c2c;
+    border-bottom: 1px solid #444444;
+}
+
+body.dark-theme .link-item, body.dark-theme .log-item {
+    background: #2c2c2c;
+    border-bottom: 1px solid #444444;
+}
+
+body.dark-theme .btn {
+    background: #0056b3;
+    color: #e0e0e0;
+}
+
+body.dark-theme .log-info {
+    color: #b0b0b0;
+}
+
+body.dark-theme .log-error {
+    color: #ff5555;
+}
+
+body.dark-theme .log-warning {
+    color: #ffaa00;
+}
+
+/* Style cho nút trong tab log */
+#toggle-handedness, #toggle-theme {
+    padding: 8px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#toggle-handedness:hover, #toggle-theme:hover {
+    opacity: 0.9;
+}
