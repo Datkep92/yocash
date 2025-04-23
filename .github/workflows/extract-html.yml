@@ -13,10 +13,10 @@ jobs:
       - name: Download Gist
         run: |
           curl -H "Authorization: token ${{ secrets.dat_kep }}" \
-               -o urls.txt \
-               https://api.github.com/gists/${{ github.event.inputs.gist_id }}
-            - name: Extract HTML
-                run: |
+               https://api.github.com/gists/${{ github.event.inputs.gist_id }} | \
+               jq -r '.files["urls.txt"].content' > urls.txt
+      - name: Extract HTML
+        run: |
           INPUT_TXT="urls.txt"
           OUTPUT_JSON="processed_urls.jsonl"
           retries=0
