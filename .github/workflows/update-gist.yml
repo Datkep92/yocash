@@ -1,4 +1,4 @@
-name: Process links
+- name: Process links
   run: |
     set -x
     INPUT_TXT="linkcu2.txt"
@@ -65,11 +65,15 @@ name: Process links
       first=0
 
       cat <<EOF >> $OUTPUT_JSON
-    {
-      "url": "$url",
-      "title": "$safe_title",
-      "description": "$safe_desc",
-      "image": "$safe_img",
-      "status": "$status",
-      "post_type": "$post_type"
-    }
+{
+  "url": "$url",
+  "title": "$safe_title",
+  "description": "$safe_desc",
+  "image": "$safe_img",
+  "status": "$status",
+  "post_type": "$post_type"
+}
+    EOF
+    done < $INPUT_TXT
+
+    echo "]" >> $OUTPUT_JSON
