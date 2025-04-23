@@ -12,8 +12,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Cài đặt jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Cài đặt jq và curl
+        run: sudo apt-get update && sudo apt-get install -y jq curl
 
       - name: Lấy nội dung file raw từ Gist
         run: |
@@ -34,67 +34,101 @@ jobs:
 
       - name: Trích xuất HTML và metadata
         run: |
-          set -e
-          INPUT_TXT="urls.txt"
-          OUTPUT_JSON="processed_urls.jsonl"
-          PLACEHOLDER_IMG="https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg"
-          > "$OUTPUT_JSON"
+          placeholder_img="https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg"
 
-          if [ ! -s "$INPUT_TXT" ]; then
-            echo "❌ File urls.txt rỗng hoặc không tồn tại"
-            exit 3
-          fi
-
-          get_post_type_from_url() {
-            case "$1" in
-              *"/reel/"*) echo "reel" ;;
-              *"/story.php"*|*"/stories/"*) echo "story" ;;
-              *"/video"*|*"/watch"*|*"/videos/"*) echo "video" ;;
-              *"/photo"*|*"/photos/"*) echo "photo" ;;
-              *"/groups/"*) echo "group_post" ;;
-              *"/posts/"*) echo "post" ;;
-              *"/events/"*) echo "event" ;;
-              *"facebook.com/"*) echo "profile" ;;
-              *) echo "unknown" ;;
-            esac
+          decode_html_entities() {
+            input="$1"
+            decoded=$(echo "$input" | sed -e 's/&quot;/"/g' \
+                                      -e "s/&#39;/'/g" \
+                                      -e 's/&lt;/</g' \
+                                      -e 's/&gt;/>/g' \
+                                      -e 's/&amp;/\&/g')
+            echo "$decoded" | awk '{
+              while (match($0, /&#[0-9]+;/)) {
+                num = substr($0, RSTART+2, RLENGTH-3);
+                chr = sprintf("%c", num);
+                $0 = substr($0, 1, RSTART-1) chr substr($0, RSTART+RLENGTH);
+              }
+              print;
+            }'
           }
 
-          while read -r url; do
-            [ -z "$url" ] && continue
-            html=$(curl -sL --max-time 15 -A "Mozilla/5.0" "$url")
+          escape_json() {
+            echo "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+          }
 
-            if [ -z "$html" ]; then
-              title="Bài viết lỗi"
-              desc="Không có nội dung"
-              img="$PLACEHOLDER_IMG"
-              status="error"
-            else
+          get_post_type_from_url() {
+            url="$1"
+            if echo "$url" | grep -qE "/reel/"; then echo "reel"
+            elif echo "$url" | grep -qE "/story.php|/stories/"; then echo "story"
+            elif echo "$url" | grep -qE "/video|/watch|/videos/"; then echo "video"
+            elif echo "$url" | grep -qE "/photo|/photos/"; then echo "photo"
+            elif echo "$url" | grep -qE "/groups/"; then echo "group_post"
+            elif echo "$url" | grep -qE "/posts/"; then echo "post"
+            elif echo "$url" | grep -qE "/events/"; then echo "event"
+            elif echo "$url" | grep -qE "facebook.com/[^/]+/$"; then echo "profile"
+            else echo "unknown"
+            fi
+          }
+
+          INPUT_TXT="urls.txt"
+          OUTPUT_JSON="processed_urls.jsonl"
+          > "$OUTPUT_JSON"
+
+          while read -r line; do
+            [ -z "$line" ] && continue
+            raw_link=$(echo "$line" | grep -oE 'https?://(www\.|m\.|fb\.|l\.|business\.)?facebook\.com[^[:space:]]+' | tail -n1)
+            [ -z "$raw_link" ] && echo "{\"error\":\"Không tìm thấy URL hợp lệ trong dòng: $line\"}" && continue
+
+            info=$(curl -Ls -o /dev/null -w "%{url_effective} %{http_code}" "$raw_link")
+            final_link=$(echo "$info" | awk '{print $1}')
+            http_code=$(echo "$info" | awk '{print $2}')
+            [ -z "$final_link" ] && echo "{\"error\":\"Không lấy được URL cuối cho $line\"}" && continue
+
+            if echo "$final_link" | grep -q "login"; then
+              decoded=$(echo "$final_link" | sed -E 's/.*next=([^\&]+).*/\1/' | sed 's/%/\\x/g' | xargs -0 echo -e)
+              final_link="$decoded"
+            fi
+
+            cleaned=$(echo "$final_link" | sed -E 's/([&?])(mibextid|rdid|share_url)=[^&]*//g' |
+                      sed -E 's/[&?]+$//' | sed -E 's/[?&]{2,}/\&/g' | sed -E 's/\?&/\?/' | sed -E 's/&\?/\?/')
+
+            html=$(curl -sL --max-time 15 -A "Mozilla/5.0" "$cleaned")
+
+            final_title="Bài viết lỗi"
+            final_desc="Không có nội dung"
+            final_image="$placeholder_img"
+            post_status="error"
+
+            if [ -n "$html" ]; then
               title=$(echo "$html" | grep -oP '(?<=<title>).*?(?=</title>)' | head -n1)
               og_title=$(echo "$html" | grep -oP '<meta property="og:title" content="\K[^"]*' | head -n1)
               og_desc=$(echo "$html" | grep -oP '<meta property="og:description" content="\K[^"]*' | head -n1)
-              og_img=$(echo "$html" | grep -oP '<meta property="og:image" content="\K[^"]*' | head -n1)
+              og_image=$(echo "$html" | grep -oP '<meta property="og:image" content="\K[^"]*' | head -n1)
 
-              final_title=${og_title:-${title:-"Bài viết lỗi"}}
-              final_desc=${og_desc:-"Không có nội dung"}
-              final_image=${og_img:-$PLACEHOLDER_IMG}
+              [ -n "$og_title" ] && final_title="$og_title"
+              [ -z "$og_title" ] && [ -n "$title" ] && final_title="$title"
 
-              if [ -n "$og_desc" ] || [ "$final_image" != "$PLACEHOLDER_IMG" ]; then
-                status="success"
+              [ -n "$og_desc" ] && final_desc=$(decode_html_entities "$og_desc")
+              [ -n "$og_image" ] && final_image="$og_image"
+
+              if [ -n "$og_desc" ] || [ "$final_image" != "$placeholder_img" ]; then
+                post_status="success"
               else
-                if echo "$html" | grep -qi "login"; then status="login"
-                elif echo "$html" | grep -qi "not found\|unavailable\|removed"; then status="link_hỏng"
-                else status="error"
+                if echo "$html" | grep -qi "login"; then post_status="login"
+                elif echo "$html" | grep -qi "content not found\|unavailable\|removed"; then post_status="link_hỏng"
+                else post_status="error"
                 fi
               fi
             fi
 
-            post_type=$(get_post_type_from_url "$url")
-            safe_title=$(echo "$final_title" | sed 's/"/\\"/g')
-            safe_desc=$(echo "$final_desc" | sed 's/"/\\"/g')
-            safe_img=$(echo "$final_image" | sed 's/"/\\"/g')
+            post_type=$(get_post_type_from_url "$cleaned")
+            safe_title=$(escape_json "$final_title")
+            safe_desc=$(escape_json "$final_desc")
+            safe_img=$(escape_json "$final_image")
 
             printf '{"url":"%s","title":"%s","description":"%s","image":"%s","status":"%s","post_type":"%s"}\n' \
-              "$url" "$safe_title" "$safe_desc" "$safe_img" "$status" "$post_type" >> "$OUTPUT_JSON"
+              "$cleaned" "$safe_title" "$safe_desc" "$safe_img" "$post_status" "$post_type" >> "$OUTPUT_JSON"
 
           done < "$INPUT_TXT"
 
