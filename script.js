@@ -729,15 +729,20 @@ function createLinkItem(link, index) {
     // Sự kiện nhấp vào nội dung
     item.querySelector('.link-content').addEventListener('click', (e) => {
         e.stopPropagation();
+
+        const url = link.url; // Đảm bảo khai báo và gán url từ đối tượng `link`
+
         if (!link.checked) {
             toggleCheckbox(link);
             item.classList.toggle('checked', link.checked);
-            window.open(link.url, '_blank');
+            window.location.href = url;
         } else {
             toggleCheckbox(link);
             item.classList.toggle('checked', link.checked);
         }
     });
+
+    
 
     // Sự kiện nút xóa
     item.querySelector('.link-index').addEventListener('click', () => {
@@ -4496,4 +4501,16 @@ function isFacebookAdsImage(url) {
 
 function isScontentImage(url) {
     return url && typeof url === 'string' && /scontent.*\.fbcdn\.net/.test(url);
+    
+} function openFacebookLink(url) {
+    const fbAppUrl = url.replace('https://www.facebook.com', 'fb://').replace('https://m.facebook.com', 'fb://');
+    const fallbackUrl = url;
+
+    window.location.href = fbAppUrl;
+
+    setTimeout(() => {
+        if (document.hasFocus()) {
+            window.location.href = fallbackUrl;
+        }
+    }, 2000);
 }
