@@ -1,58 +1,231 @@
-name: Extract Facebook Metadata and Upload Artifact
-
+name: Extract HTML from URLs
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      gist_id:
+        description: 'ID của Gist chứa file .txt với danh sách URL'
+        required: true
 
 jobs:
-  extract-metadata:
+  extract:
     runs-on: ubuntu-latest
     steps:
-      # Checkout the repository
-      - name: Checkout repository
-        uses: actions/checkout@v2
-
-      # Install dependencies (curl, jq, etc.)
-      - name: Set up dependencies
+      - name: Cài đặt công cụ cần thiết
         run: |
           sudo apt-get update
           sudo apt-get install -y jq curl
 
-      # Extract metadata from Facebook URL
-      - name: Extract metadata from Facebook URL
+      - name: Lấy nội dung file raw từ Gist
         run: |
-          # Define the Facebook URL
-          FB_URL="https://www.facebook.com/story.php?story_fbid=122107539026822761&id=61574682854737"
-          
-          # Fetch page HTML
-          HTML=$(curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "$FB_URL")
-          
-          # Extract metadata using grep and jq
-          TITLE=$(echo "$HTML" | grep -oP '(?<=<meta property="og:title" content=")[^"]+')
-          DESCRIPTION=$(echo "$HTML" | grep -oP '(?<=<meta property="og:description" content=")[^"]+')
-          IMAGE=$(echo "$HTML" | grep -oP '(?<=<meta property="og:image" content=")[^"]+')
-          POST_TYPE="story"
-          STATUS="success"
+          # Lấy raw_url của file urls.txt trong Gist
+          RAW_URL=$(curl -s -H "Authorization: token ${{ secrets.dat_kep }}" \
+            https://api.github.com/gists/${{ github.event.inputs.gist_id }} \
+            | jq -r '.files["urls.txt"].raw_url')
 
-          # Format as JSON
-          JSON=$(jq -n \
-            --arg url "$FB_URL" \
-            --arg title "$TITLE" \
-            --arg description "$DESCRIPTION" \
-            --arg image "$IMAGE" \
-            --arg status "$STATUS" \
-            --arg post_type "$POST_TYPE" \
-            '{url: $url, title: $title, description: $description, image: $image, status: $status, post_type: $post_type}')
-          
-          echo "$JSON" > metadata.json
+          # Kiểm tra nếu không tìm thấy file urls.txt
+          if [ -z "$RAW_URL" ] || [ "$RAW_URL" = "null" ]; then
+            printf "❌ Error: File urls.txt not found in Gist.\n"
+            exit 1
+          fi
 
-      # Upload the metadata JSON as artifact
-      - name: Upload metadata artifact
-        uses: actions/upload-artifact@v2
+          # Tải danh sách URL dạng raw text
+          curl -L "$RAW_URL" -o urls.txt
+          echo "✅ Đã tải urls.txt thành công"
+
+      - name: Trích xuất HTML và metadata
+        run: |
+          INPUT_TXT="urls.txt"
+          OUTPUT_JSON="processed_urls.jsonl"
+          PLACEHOLDER_IMG="https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg"
+          MAX_LINES=3000
+
+          > "$OUTPUT_JSON"
+
+          decode_html_entities() {
+            printf '%s' "$1" | sed -e 's/"/"/g' -e "s/'/'/g" -e 's/</</g' -e 's/>/>/g' -e 's/&/\&/g'
+          }
+
+          get_post_type_from_url() {
+            case "$1" in
+              *"/reel/"*) printf "reel";;
+              *"/story.php"*|*"/stories/"*) printf "story";;
+              *"/video"*|*"/watch"*|*"/videos/"*) printf "video";;
+              *"/photo"*|*"/photos/"*) printf "photo";;
+              *"/groups/"*) printf "group_post";;
+              *"/posts/"*) printf "post";;
+              *"/events/"*) printf "event";;
+              *"facebook.com/"*) printf "profile";;
+              *) printf "unknown";;
+            esac
+          }
+
+          # Thử trích xuất title bằng nhiều cách
+          extract_title() {
+            html="$1"
+            # Phương pháp 1: Dùng grep
+            title=$(printf '%s' "$html" | grep -oP '(?<=<title>).*?(?=</title>)' | head -n1)
+            if [ -n "$title" ]; then
+              printf '%s' "$title"
+              return
+            fi
+            # Phương pháp 2: Dùng awk
+            title=$(printf '%s' "$html" | awk -F'</?title>' '/<title>/ {print $2}' | head -n1)
+            if [ -n "$title" ]; then
+              printf '%s' "$title"
+              return
+            fi
+            # Phương pháp 3: Dùng sed
+            title=$(printf '%s' "$html" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p' | head -n1)
+            printf '%s' "$title"
+          }
+
+          # Thử trích xuất og:title bằng nhiều cách
+          extract_og_title() {
+            html="$1"
+            # Phương pháp 1: Dùng grep
+            og_title=$(printf '%s' "$html" | grep -oP '<meta property="og:title" content="\K[^"]*' | head -n1)
+            if [ -n "$og_title" ]; then
+              printf '%s' "$og_title"
+              return
+            fi
+            # Phương pháp 2: Dùng awk
+            og_title=$(printf '%s' "$html" | awk '/meta property="og:title"/ {match($0, /content="[^"]*/); print substr($0, RSTART+9, RLENGTH-9)}' | head -n1)
+            if [ -n "$og_title" ]; then
+              printf '%s' "$og_title"
+              return
+            fi
+            # Phương pháp 3: Dùng sed
+            og_title=$(printf '%s' "$html" | sed -n 's/.*meta property="og:title" content="\([^"]*\)".*/\1/p' | head -n1)
+            printf '%s' "$og_title"
+          }
+
+          # Thử trích xuất og:description bằng nhiều cách
+          extract_og_desc() {
+            html="$1"
+            # Phương pháp 1: Dùng grep
+            og_desc=$(printf '%s' "$html" | grep -oP '<meta property="og:description" content="\K[^"]*' | head -n1)
+            if [ -n "$og_desc" ]; then
+              printf '%s' "$og_desc"
+              return
+            fi
+            # Phương pháp 2: Dùng awk
+            og_desc=$(printf '%s' "$html" | awk '/meta property="og:description"/ {match($0, /content="[^"]*/); print substr($0, RSTART+9, RLENGTH-9)}' | head -n1)
+            if [ -n "$og_desc" ]; then
+              printf '%s' "$og_desc"
+              return
+            fi
+            # Phương pháp 3: Dùng sed
+            og_desc=$(printf '%s' "$html" | sed -n 's/.*meta property="og:description" content="\([^"]*\)".*/\1/p' | head -n1)
+            printf '%s' "$og_desc"
+          }
+
+          # Thử trích xuất og:image bằng nhiều cách
+          extract_og_img() {
+            html="$1"
+            # Phương pháp 1: Dùng grep
+            og_img=$(printf '%s' "$html" | grep -oP '<meta property="og:image" content="\K[^"]*' | head -n1)
+            if [ -n "$og_img" ]; then
+              printf '%s' "$og_img"
+              return
+            fi
+            # Phương pháp 2: Dùng awk
+            og_img=$(printf '%s' "$html" | awk '/meta property="og:image"/ {match($0, /content="[^"]*/); print substr($0, RSTART+9, RLENGTH-9)}' | head -n1)
+            if [ -n "$og_img" ]; then
+              printf '%s' "$og_img"
+              return
+            fi
+            # Phương pháp 3: Dùng sed
+            og_img=$(printf '%s' "$html" | sed -n 's/.*meta property="og:image" content="\([^"]*\)".*/\1/p' | head -n1)
+            printf '%s' "$og_img"
+          }
+
+          # Giới hạn số dòng xử lý
+          head -n "$MAX_LINES" "$INPUT_TXT" > temp_urls.txt
+
+          while read -r url; do
+            [ -z "$url" ] && continue
+            # Thử lấy HTML với nhiều cách
+            html=$(curl -sL --max-time 15 \
+              -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
+              -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
+              -H "Accept-Language: en-US,en;q=0.5" \
+              -H "Connection: keep-alive" \
+              -H "Upgrade-Insecure-Requests: 1" \
+              "$url")
+
+            # Nếu thất bại, thử với User-Agent đơn giản
+            if [ -z "$html" ]; then
+              html=$(curl -sL --max-time 15 -A "Mozilla/5.0" "$url")
+            fi
+
+            # Debug: Lưu HTML với tên file hợp lệ
+            safe_filename=$(basename "$url" | sed 's/[^a-zA-Z0-9._-]/_/g')
+            printf '%s\n' "$html" > "debug_html_${safe_filename}.html"
+
+            if [ $? -ne 0 ] || [ -z "$html" ]; then
+              printf "Error: Cannot fetch URL %s, skipping...\n" "$url"
+              title="Bài viết lỗi"
+              desc="Không có nội dung"
+              img="$PLACEHOLDER_IMG"
+              status="error"
+            else
+              title=$(extract_title "$html")
+              og_title=$(extract_og_title "$html")
+              og_desc=$(extract_og_desc "$html")
+              og_img=$(extract_og_img "$html")
+
+              final_title=${og_title:-${title:-"Bài viết lỗi"}}
+              final_desc=$(decode_html_entities "${og_desc:-"Không có nội dung"}")
+              final_image=${og_img:-$PLACEHOLDER_IMG}
+
+              if [ -n "$og_desc" ] || [ "$final_image" != "$PLACEHOLDER_IMG" ]; then
+                status="success"
+              else
+                if printf '%s' "$html" | grep -qi "login"; then status="login"
+                elif printf '%s' "$html" | grep -qi "content not found\|unavailable\|removed"; then status="link_hỏng"
+                else status="error"
+                fi
+              fi
+            fi
+
+            post_type=$(get_post_type_from_url "$url")
+            safe_title=$(printf '%s' "$final_title" | sed 's/"/\\"/g')
+            safe_desc=$(printf '%s' "$final_desc" | sed 's/"/\\"/g')
+            safe_img=$(printf '%s' "$final_image" | sed 's/"/\\"/g')
+
+            printf '{"url":"%s","title":"%s","description":"%s","image":"%s","status":"%s","post_type":"%s"}\n' \
+              "$url" "$safe_title" "$safe_desc" "$safe_img" "$status" "$post_type" >> "$OUTPUT_JSON"
+
+          done < temp_urls.txt
+
+          rm temp_urls.txt
+          echo "✅ Đã tạo $OUTPUT_JSON"
+
+      - name: Lưu kết quả processed_urls.jsonl
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: metadata
-          path: metadata.json
+          name: processed-urls
+          path: processed_urls.jsonl
 
-  # Optionally, you can add another job to deploy the metadata or use it elsewhere
+      - name: Lưu HTML debug (nếu cần)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-html-files
+          path: debug_html_*.html
+
+      - name: Cập nhật Gist với kết quả
+        run: |
+          set -e
+          GIST_ID="${{ github.event.inputs.gist_id }}"
+          CONTENT=$(jq -Rs . < processed_urls.jsonl)
+
+          curl -X PATCH \
+            -H "Authorization: token ${{ secrets.dat_kep }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d "{\"files\":{\"processed_urls.jsonl\":{\"content\":$CONTENT}}}" \
+            https://api.github.com/gists/$GIST_ID
+
+          echo "✅ Đã cập nhật processed_urls.jsonl trong Gist!"
