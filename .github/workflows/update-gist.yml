@@ -85,15 +85,18 @@ jobs:
             "$url" "$safe_title" "$safe_desc" "$safe_img" "$status" "$post_type" >> $OUTPUT_JSON
         done < $INPUT_TXT
 
+        echo "Nội dung file linkcu.json:"
+        cat $OUTPUT_JSON
+
     - name: Upload JSON to Gist
       env:
-        GIST_ID: "eaa7aafb85a6fe7546f6c6434b93810c"
+        GIST_ID: "d5eaeee8d07e6a88883646cff42d2b88"  # Thay bằng Gist ID mới
         GIST_FILE_NAME: "linkitemmmm"
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
+        set -x
         content=$(cat $OUTPUT_JSON | jq -Rs .)
         response=$(curl -s -o response.json -w "%{http_code}" -X PATCH "https://api.github.com/gists/$GIST_ID" \
-          -H "Authorization: Bearer $GH_TOKEN" \
+          -H "Authorization: Bearer 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" \  # Thay <your-pat-token> bằng PAT mới
           -H "Accept: application/vnd.github+json" \
           -d "{\"files\": {\"$GIST_FILE_NAME\": {\"content\": $content}}}")
         if [ "$response" -ne 200 ]; then
@@ -101,3 +104,4 @@ jobs:
           cat response.json
           exit 1
         fi
+        echo "Gist updated successfully!"
