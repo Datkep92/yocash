@@ -1,5 +1,6 @@
 - name: Process links
   run: |
+    set -x  # Debug mode
     INPUT_TXT="linkcu2.txt"
     OUTPUT_JSON="linkcu.json"
     PLACEHOLDER_IMG="https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg"
@@ -29,6 +30,10 @@
     while read -r url; do
       [ -z "$url" ] && continue
       html=$(curl -sL --max-time 15 -A "Mozilla/5.0" "$url")
+      if [ $? -ne 0 ]; then
+        echo "Error: Curl failed for URL $url"
+        continue
+      fi
 
       if [ -z "$html" ]; then
         title="Bài viết lỗi"
