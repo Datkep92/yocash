@@ -1,31 +1,79 @@
-name: Extract HTML from URLs
-on:
-  workflow_dispatch:
-    inputs:
-      gist_id:
-        description: 'ID of the Gist containing URLs'
-        required: true
+- name: Extract HTML
+        run: |
+          INPUT_TXT="urls.txt"
+          OUTPUT_JSON="processed_urls.jsonl"
+          retries=0
 
-jobs:
-  extract:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download Gist
-        run: |
-          curl -H "Authorization: token ${{ secrets.dat_kep }}" \
-               -o urls.txt \
-               https://api.github.com/gists/${{ github.event.inputs.gist_id }}
-      - name: Extract HTML
-        run: |
-          while IFS= read -r url; do
-            echo "Processing $url"
-            html=$(curl -s -L "$url")
-            title=$(echo "$html" | grep -oP '<title>\K[^<]+(?=</title>)' || echo "No Title")
-            echo "{\"url\":\"$url\",\"title\":\"$title\",\"description\":\"\",\"image\":\"\",\"status\":\"success\",\"post_type\":\"post\"}" >> processed_urls.jsonl
-          done < urls.txt
-      - name: Update Gist
-        run: |
-          curl -X PATCH \
-               -H "Authorization: token ${{ secrets.dat_kep }}" \
-               -d "{\"files\":{\"processed_urls.jsonl\":{\"content\":\"$(cat processed_urls.jsonl | jq -R -s .)\"}}}" \
-               https://api.github.com/gists/${{ github.event.inputs.gist_id }}
+          # Check if file is empty, retry up to 5 times
+          while [ ! -s "$INPUT_TXT" ] && [ "$retries" -lt 5 ]; do
+            printf "⏳ Waiting for file content... (%d)\n" "$((retries+1))"
+            sleep 1
+            retries=$((retries+1))
+          done
+
+          if [ ! -s "$INPUT_TXT" ]; then
+            printf "❌ Error: File is empty.\n"
+            exit 1
+          fi
+
+          printf "⏳ Processing links and creating JSON...\n"
+
+          # Function to determine post type from URL
+          get_post_type_from_url() {
+            case "$1" in
+              *"/reel/"*) printf "reel" ;;
+              *"/story.php"*|*"/stories/"*) printf "story" ;;
+              *"/video"*|*"/watch"*|*"/videos/"*) printf "video" ;;
+              *"/photo"*|*"/photos/"*) printf "photo" ;;
+              *"/groups/"*) printf "group_post" ;;
+              *"/posts/"*) printf "post" ;;
+              *"/events/"*) printf "event" ;;
+              *"facebook.com/"*) printf "profile" ;;
+              *) printf "unknown" ;;
+            esac
+          }
+
+          > "$OUTPUT_JSON"
+
+          while read -r url; do
+            [ -z "$url" ] && continue
+
+            html=$(curl -sL --max-time 15 -A "Mozilla/5.0" "$url")
+
+            if [ -z "$html" ]; then
+              title="Error Post"
+              desc="No content"
+              img=""
+              status="error"
+            else
+              title=$(echo "$html" | grep -oP '(?<=<title>).*?(?=</title>)' | head -n1)
+              og_title=$(echo "$html" | grep -oP '<meta property="og:title" content="\K[^"]*' | head -n1)
+              og_desc=$(echo "$html" | grep -oP '<meta property="og:description" content="\K[^"]*' | head -n1)
+              og_img=$(echo "$html" | grep -oP '<meta property="og:image" content="\K[^"]*' | head -n1)
+
+              final_title=${og_title:-${title:-"Error Post"}}
+              final_desc=${og_desc:-"No content"}
+              final_image=${og_img:-""}
+
+              if [ -n "$og_desc" ] || [ -n "$og_img" ]; then
+                status="success"
+              else
+                if echo "$html" | grep -qi "login"; then status="login"
+                elif echo "$html" | grep -qi "content not found\|unavailable\|removed"; then status="link_hỏng"
+                else status="error"
+                fi
+              fi
+            fi
+
+            post_type=$(get_post_type_from_url "$url")
+            safe_title=$(printf '%s' "$final_title" | sed 's/"/\\"/g')
+            safe_desc=$(printf '%s' "$final_desc" | sed 's/"/\\"/g')
+            safe_img=$(printf '%s' "$final_image" | sed 's/"/\\"/g')
+
+            # Write JSON Lines using printf
+            printf '{"url":"%s","title":"%s","description":"%s","image":"%s","status":"%s","post_type":"%s"}\n' \
+              "$url" "$safe_title" "$safe_desc" "$safe_img" "$status" "$post_type" >> "$OUTPUT_JSON"
+
+          done < "$INPUT_TXT"
+
+          printf "✅ Created JSON Lines file: %s\n" "$OUTPUT_JSON"
