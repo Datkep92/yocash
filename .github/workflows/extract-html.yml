@@ -1,74 +1,66 @@
 name: Extract HTML from URLs
-
 on:
   workflow_dispatch:
     inputs:
       gist_id:
-        description: 'ID của Gist chứa file .txt với danh sách URL'
+        description: 'ID of the Gist containing URLs'
         required: true
 
 jobs:
   extract:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Cài đặt jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Tải danh sách URL từ Gist (txt)
+      - name: Download Gist
         run: |
-          set -e
-          GIST_ID="${{ github.event.inputs.gist_id }}"
-          echo "📥 Đang tải nội dung Gist $GIST_ID..."
-
-          GIST_DATA=$(curl -s -H "Authorization: token ${{ secrets.dat_kep }}" \
-            https://api.github.com/gists/$GIST_ID)
-
-          RAW_URL=$(echo "$GIST_DATA" | jq -r '.files | to_entries[] | select(.value.filename | endswith(".txt")) | .value.raw_url')
-
-          if [ -z "$RAW_URL" ]; then
-            echo "❌ Không tìm thấy file .txt trong Gist!"
-            exit 3
-          fi
-
-          curl -s "$RAW_URL" -o urls.txt
-          echo "✅ Đã tải urls.txt"
-
-      - name: Trích xuất HTML và metadata
+          curl -H "Authorization: token ${{ secrets.dat_kep }}" \
+               https://api.github.com/gists/${{ github.event.inputs.gist_id }} | \
+               jq -r '.files["urls.txt"].content' > urls.txt
+      - name: Extract HTML
         run: |
-          set -e
           INPUT_TXT="urls.txt"
           OUTPUT_JSON="processed_urls.jsonl"
-          PLACEHOLDER_IMG="https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg"
-          > "$OUTPUT_JSON"
+          retries=0
+
+          # Check if file is empty, retry up to 5 times
+          while [ ! -s "$INPUT_TXT" ] && [ "$retries" -lt 5 ]; do
+            printf "⏳ Waiting for file content... (%d)\n" "$((retries+1))"
+            sleep 1
+            retries=$((retries+1))
+          done
 
           if [ ! -s "$INPUT_TXT" ]; then
-            echo "❌ File urls.txt rỗng hoặc không tồn tại"
-            exit 3
+            printf "❌ Error: File is empty.\n"
+            exit 1
           fi
 
+          printf "⏳ Processing links and creating JSON...\n"
+
+          # Function to determine post type from URL
           get_post_type_from_url() {
             case "$1" in
-              *"/reel/"*) echo "reel" ;;
-              *"/story.php"*|*"/stories/"*) echo "story" ;;
-              *"/video"*|*"/watch"*|*"/videos/"*) echo "video" ;;
-              *"/photo"*|*"/photos/"*) echo "photo" ;;
-              *"/groups/"*) echo "group_post" ;;
-              *"/posts/"*) echo "post" ;;
-              *"/events/"*) echo "event" ;;
-              *"facebook.com/"*) echo "profile" ;;
-              *) echo "unknown" ;;
+              *"/reel/"*) printf "reel" ;;
+              *"/story.php"*|*"/stories/"*) printf "story" ;;
+              *"/video"*|*"/watch"*|*"/videos/"*) printf "video" ;;
+              *"/photo"*|*"/photos/"*) printf "photo" ;;
+              *"/groups/"*) printf "group_post" ;;
+              *"/posts/"*) printf "post" ;;
+              *"/events/"*) printf "event" ;;
+              *"facebook.com/"*) printf "profile" ;;
+              *) printf "unknown" ;;
             esac
           }
 
+          > "$OUTPUT_JSON"
+
           while read -r url; do
             [ -z "$url" ] && continue
+
             html=$(curl -sL --max-time 15 -A "Mozilla/5.0" "$url")
 
             if [ -z "$html" ]; then
-              title="Bài viết lỗi"
-              desc="Không có nội dung"
-              img="$PLACEHOLDER_IMG"
+              title="Error Post"
+              desc="No content"
+              img=""
               status="error"
             else
               title=$(echo "$html" | grep -oP '(?<=<title>).*?(?=</title>)' | head -n1)
@@ -76,42 +68,35 @@ jobs:
               og_desc=$(echo "$html" | grep -oP '<meta property="og:description" content="\K[^"]*' | head -n1)
               og_img=$(echo "$html" | grep -oP '<meta property="og:image" content="\K[^"]*' | head -n1)
 
-              final_title=${og_title:-${title:-"Bài viết lỗi"}}
-              final_desc=${og_desc:-"Không có nội dung"}
-              final_image=${og_img:-$PLACEHOLDER_IMG}
+              final_title=${og_title:-${title:-"Error Post"}}
+              final_desc=${og_desc:-"No content"}
+              final_image=${og_img:-""}
 
-              if [ -n "$og_desc" ] || [ "$final_image" != "$PLACEHOLDER_IMG" ]; then
+              if [ -n "$og_desc" ] || [ -n "$og_img" ]; then
                 status="success"
               else
                 if echo "$html" | grep -qi "login"; then status="login"
-                elif echo "$html" | grep -qi "not found\|unavailable\|removed"; then status="link_hỏng"
+                elif echo "$html" | grep -qi "content not found\|unavailable\|removed"; then status="link_hỏng"
                 else status="error"
                 fi
               fi
             fi
 
             post_type=$(get_post_type_from_url "$url")
-            safe_title=$(echo "$final_title" | sed 's/"/\\"/g')
-            safe_desc=$(echo "$final_desc" | sed 's/"/\\"/g')
-            safe_img=$(echo "$final_image" | sed 's/"/\\"/g')
+            safe_title=$(printf '%s' "$final_title" | sed 's/"/\\"/g')
+            safe_desc=$(printf '%s' "$final_desc" | sed 's/"/\\"/g')
+            safe_img=$(printf '%s' "$final_image" | sed 's/"/\\"/g')
 
+            # Write JSON Lines using printf
             printf '{"url":"%s","title":"%s","description":"%s","image":"%s","status":"%s","post_type":"%s"}\n' \
               "$url" "$safe_title" "$safe_desc" "$safe_img" "$status" "$post_type" >> "$OUTPUT_JSON"
 
           done < "$INPUT_TXT"
 
-          echo "✅ Đã tạo $OUTPUT_JSON"
-
-      - name: Cập nhật Gist với kết quả
+          printf "✅ Created JSON Lines file: %s\n" "$OUTPUT_JSON"
+      - name: Update Gist
         run: |
-          set -e
-          GIST_ID="${{ github.event.inputs.gist_id }}"
-          CONTENT=$(jq -Rs . < processed_urls.jsonl)
-
           curl -X PATCH \
-            -H "Authorization: token ${{ secrets.dat_kep }}" \
-            -H "Accept: application/vnd.github+json" \
-            -d "{\"files\":{\"processed_urls.jsonl\":{\"content\":$CONTENT}}}" \
-            https://api.github.com/gists/$GIST_ID
-
-          echo "✅ Đã cập nhật processed_urls.jsonl trong Gist!"
+               -H "Authorization: token ${{ secrets.dat_kep }}" \
+               -d "{\"files\":{\"processed_urls.jsonl\":{\"content\":\"$(cat processed_urls.jsonl | jq -R -s .)\"}}}" \
+               https://api.github.com/gists/${{ github.event.inputs.gist_id }}
