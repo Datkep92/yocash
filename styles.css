@@ -1769,6 +1769,7 @@ textarea.edit-fanpage-form-control {
 .filter-btn[data-filter="blacklist"] { background-color: #F44336; }
 .filter-btn[data-filter="note"]      { background-color: #8BC34A; }
 .filter-btn[data-filter="success"]   { background-color: #4CAF50; }
+.filter-btn[data-filter="image_scontent"]   { background-color: #daa520; }
     .filter-btn.active {
         box-shadow: 0 0 0 2px #00000033;
         outline: 2px solid white;
