@@ -90,13 +90,13 @@ jobs:
 
     - name: Upload JSON to Gist
       env:
-        GIST_ID: "d5eaeee8d07e6a88883646cff42d2b88"  # Thay bằng Gist ID mới
+        GIST_ID: "d5eaeee8d07e6a88883646cff42d2b88"  # Gist ID mới
         GIST_FILE_NAME: "linkitemmmm"
       run: |
         set -x
         content=$(cat $OUTPUT_JSON | jq -Rs .)
         response=$(curl -s -o response.json -w "%{http_code}" -X PATCH "https://api.github.com/gists/$GIST_ID" \
-          -H "Authorization: Bearer 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" \  # Thay <your-pat-token> bằng PAT mới
+          -H "Authorization: Bearer <your-pat-token>" \
           -H "Accept: application/vnd.github+json" \
           -d "{\"files\": {\"$GIST_FILE_NAME\": {\"content\": $content}}}")
         if [ "$response" -ne 200 ]; then
