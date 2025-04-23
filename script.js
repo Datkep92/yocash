@@ -3673,7 +3673,7 @@ function deleteSelected() {
             saveBackup('deleteLinks', { links: selectedLinks });
             state.links = state.links.filter(link => !selectedLinks.includes(link));
             saveData({ links: true });
-            renderTabContent(state.currentTab);
+            //renderTabContent(state.currentTab);
             updateCounters();
             showToast(`Đã xóa ${selectedLinks.length} link`, 'success');
             addLog(`Đã xóa ${selectedLinks.length} link`, 'info');
