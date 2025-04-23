@@ -12,6 +12,20 @@ jobs:
     steps:
       - name: Download Gist
         run: |
-          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          curl -H "Authorization: token ${{ secrets.dat_kep }}" \
                -o urls.txt \
+               https://api.github.com/gists/${{ github.event.inputs.gist_id }}
+      - name: Extract HTML
+        run: |
+          while IFS= read -r url; do
+            echo "Processing $url"
+            html=$(curl -s -L "$url")
+            title=$(echo "$html" | grep -oP '<title>\K[^<]+(?=</title>)' || echo "No Title")
+            echo "{\"url\":\"$url\",\"title\":\"$title\",\"description\":\"\",\"image\":\"\",\"status\":\"success\",\"post_type\":\"post\"}" >> processed_urls.jsonl
+          done < urls.txt
+      - name: Update Gist
+        run: |
+          curl -X PATCH \
+               -H "Authorization: token ${{ secrets.dat_kep }}" \
+               -d "{\"files\":{\"processed_urls.jsonl\":{\"content\":\"$(cat processed_urls.jsonl | jq -R -s .)\"}}}" \
                https://api.github.com/gists/${{ github.event.inputs.gist_id }}
