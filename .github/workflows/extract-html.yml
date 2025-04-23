@@ -10,12 +10,22 @@ jobs:
   extract:
     runs-on: ubuntu-latest
     steps:
-      - name: Download Gist
+      - name: Lấy nội dung file raw từ Gist
         run: |
-          curl -H "Authorization: token ${{ secrets.dat_kep }}" \
-               https://api.github.com/gists/${{ github.event.inputs.gist_id }} | \
-               jq -r '.files["urls.txt"].content' > urls.txt
-      - name: Extract HTML
+          # Lấy raw_url của file urls.txt trong Gist
+          RAW_URL=$(curl -s -H "Authorization: token ${{ secrets.dat_kep }}" \
+            https://api.github.com/gists/${{ github.event.inputs.gist_id }} \
+            | jq -r '.files["urls.txt"].raw_url')
+
+          # Kiểm tra nếu không tìm thấy file urls.txt
+          if [ -z "$RAW_URL" ]; then
+            printf "❌ Error: File urls.txt not found in Gist.\n"
+            exit 1
+          fi
+
+          # Tải danh sách URL dạng raw text
+          curl -L "$RAW_URL" -o urls.txt
+      - name: Trích xuất HTML và metadata
         run: |
           INPUT_TXT="urls.txt"
           OUTPUT_JSON="processed_urls.jsonl"
