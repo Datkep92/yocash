@@ -1,72 +1,90 @@
-name: Extract Facebook Metadata
-
+name: Extract HTML from URLs
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - 'urls.txt'
+    inputs:
+      gist_id:
+        description: 'ID của Gist chứa file .txt với danh sách URL'
+        required: true
 
 jobs:
   extract:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Cài các công cụ cần thiết
-        run: sudo apt-get update && sudo apt-get install -y curl jq sed grep gawk
-
-      - name: Tạo script trích xuất
+      - name: Cài đặt công cụ cần thiết
         run: |
-          cat <<'EOF' > extract.sh
-          #!/bin/bash
-          set -e
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+          # Cài đặt pup để parse HTML
+          curl -sL https://github.com/ericchiang/pup/releases/download/v0.4.0/pup_v0.4.0_linux_amd64.zip -o pup.zip
+          unzip pup.zip
+          sudo mv pup /usr/local/bin/
+          pup --version
 
+      - name: Lấy nội dung file raw từ Gist
+        run: |
+          # Lấy raw_url của file urls.txt trong Gist
+          RAW_URL=$(curl -s -H "Authorization: token ${{ secrets.dat_kep }}" \
+            https://api.github.com/gists/${{ github.event.inputs.gist_id }} \
+            | jq -r '.files["urls.txt"].raw_url')
+
+          # Kiểm tra nếu không tìm thấy file urls.txt
+          if [ -z "$RAW_URL" ] || [ "$RAW_URL" = "null" ]; then
+            printf "❌ Error: File urls.txt not found in Gist.\n"
+            exit 1
+          fi
+
+          # Tải danh sách URL dạng raw text
+          curl -L "$RAW_URL" -o urls.txt
+          echo "✅ Đã tải urls.txt thành công"
+
+      - name: Trích xuất HTML và metadata
+        run: |
+          INPUT_TXT="urls.txt"
+          OUTPUT_JSON="processed_urls.jsonl"
           PLACEHOLDER_IMG="https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg"
-          OUTPUT_JSON="output.json"
+          MAX_LINES=3000
+
           > "$OUTPUT_JSON"
 
           decode_html_entities() {
-            input="$1"
-            decoded=$(echo "$input" | sed -e 's/&quot;/"/g' -e "s/&#39;/'/g" -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g')
-            echo "$decoded" | awk '{
-              while (match($0, /&#[0-9]+;/)) {
-                num = substr($0, RSTART+2, RLENGTH-3);
-                chr = sprintf("%c", num);
-                $0 = substr($0, 1, RSTART-1) chr substr($0, RSTART+RLENGTH);
-              }
-              print;
-            }'
+            printf '%s' "$1" | sed -e 's/"/"/g' -e "s/'/'/g" -e 's/</</g' -e 's/>/>/g' -e 's/&/\&/g'
           }
 
           get_post_type_from_url() {
             case "$1" in
-              *"/reel/"*) echo "reel";;
-              *"/story.php"*|*"/stories/"*) echo "story";;
-              *"/video"*|*"/watch"*|*"/videos/"*) echo "video";;
-              *"/photo"*|*"/photos/"*) echo "photo";;
-              *"/groups/"*) echo "group_post";;
-              *"/posts/"*) echo "post";;
-              *"/events/"*) echo "event";;
-              *"facebook.com/"*) echo "profile";;
-              *) echo "unknown";;
+              *"/reel/"*) printf "reel";;
+              *"/story.php"*|*"/stories/"*) printf "story";;
+              *"/video"*|*"/watch"*|*"/videos/"*) printf "video";;
+              *"/photo"*|*"/photos/"*) printf "photo";;
+              *"/groups/"*) printf "group_post";;
+              *"/posts/"*) printf "post";;
+              *"/events/"*) printf "event";;
+              *"facebook.com/"*) printf "profile";;
+              *) printf "unknown";;
             esac
           }
 
+          # Giới hạn số dòng xử lý
+          head -n "$MAX_LINES" "$INPUT_TXT" > temp_urls.txt
+
           while read -r url; do
             [ -z "$url" ] && continue
-            html=$(curl -sL --max-time 15 -A "Mozilla/5.0" "$url")
+            html=$(curl -sL --max-time 15 \
+              -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
+              -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
+              -H "Accept-Language: en-US,en;q=0.5" \
+              "$url")
             if [ $? -ne 0 ] || [ -z "$html" ]; then
+              printf "Error: Cannot fetch URL %s, skipping...\n" "$url"
               title="Bài viết lỗi"
               desc="Không có nội dung"
               img="$PLACEHOLDER_IMG"
               status="error"
             else
-              title=$(echo "$html" | grep -oP '(?<=<title>).*?(?=</title>)' | head -n1)
-              og_title=$(echo "$html" | grep -oP '<meta property="og:title" content="\\K[^"]*' | head -n1)
-              og_desc=$(echo "$html" | grep -oP '<meta property="og:description" content="\\K[^"]*' | head -n1)
-              og_img=$(echo "$html" | grep -oP '<meta property="og:image" content="\\K[^"]*' | head -n1)
+              title=$(printf '%s' "$html" | pup 'title text{}' | head -n1)
+              og_title=$(printf '%s' "$html" | pup 'meta[property="og:title"] attr{content}' | head -n1)
+              og_desc=$(printf '%s' "$html" | pup 'meta[property="og:description"] attr{content}' | head -n1)
+              og_img=$(printf '%s' "$html" | pup 'meta[property="og:image"] attr{content}' | head -n1)
 
               final_title=${og_title:-${title:-"Bài viết lỗi"}}
               final_desc=$(decode_html_entities "${og_desc:-"Không có nội dung"}")
@@ -75,29 +93,37 @@ jobs:
               if [ -n "$og_desc" ] || [ "$final_image" != "$PLACEHOLDER_IMG" ]; then
                 status="success"
               else
-                if echo "$html" | grep -qi "login"; then status="login"
-                elif echo "$html" | grep -qi "content not found\\|unavailable\\|removed"; then status="link_hỏng"
+                if printf '%s' "$html" | grep -qi "login"; then status="login"
+                elif printf '%s' "$html" | grep -qi "content not found\|unavailable\|removed"; then status="link_hỏng"
                 else status="error"
                 fi
               fi
             fi
 
             post_type=$(get_post_type_from_url "$url")
-            safe_title=$(echo "$final_title" | sed 's/"/\\"/g')
-            safe_desc=$(echo "$final_desc" | sed 's/"/\\"/g')
-            safe_img=$(echo "$final_image" | sed 's/"/\\"/g')
+            safe_title=$(printf '%s' "$final_title" | sed 's/"/\\"/g')
+            safe_desc=$(printf '%s' "$final_desc" | sed 's/"/\\"/g')
+            safe_img=$(printf '%s' "$final_image" | sed 's/"/\\"/g')
 
             printf '{"url":"%s","title":"%s","description":"%s","image":"%s","status":"%s","post_type":"%s"}\n' \
               "$url" "$safe_title" "$safe_desc" "$safe_img" "$status" "$post_type" >> "$OUTPUT_JSON"
-          done < urls.txt
-          EOF
-          chmod +x extract.sh
 
-      - name: Chạy script trích xuất
-        run: ./extract.sh
+          done < temp_urls.txt
 
-      - name: Upload file output.json
-        uses: actions/upload-artifact@v3
-        with:
-          name: fb-meta
-          path: output.json
+          rm temp_urls.txt
+          echo "✅ Đã tạo $OUTPUT_JSON"
+
+      - name: Cập nhật Gist với kết quả
+        run: |
+          set -e
+          GIST_ID="${{ github.event.inputs.gist_id }}"
+          CONTENT=$(jq -Rs . < processed_urls.jsonl)
+
+          curl -X PATCH \
+            -H "Authorization: token ${{ secrets.dat_kep }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d "{\"files\":{\"processed_urls.jsonl\":{\"content\":$CONTENT}}}" \
+            https://api.github.com/gists/$GIST_ID
+
+          echo "✅ Đã cập nhật processed_urls.jsonl trong Gist!"
