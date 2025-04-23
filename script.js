@@ -2921,7 +2921,7 @@ function getTypeLabel(type) {
 }
 
 // Refactored deleteFanpage
-function deleteFanpage(fanpageId) {
+functioeFanpage(fanpageId) {
     const fanpage = state.fanpages.find(f => f.id === fanpageId);
     if (!fanpage) return;
 
@@ -3409,7 +3409,7 @@ function getTypeLabel(type) {
 }
 
 // Refactored deleteFanpage
-function deleteFanpage(fanpageId) {
+functioeFanpage(fanpageId) {
     const fanpage = state.fanpages.find(f => f.id === fanpageId);
     if (!fanpage) return;
 
@@ -3673,7 +3673,7 @@ function deleteSelected() {
             saveBackup('deleteLinks', { links: selectedLinks });
             state.links = state.links.filter(link => !selectedLinks.includes(link));
             saveData({ links: true });
-            //renderTabContent(state.currentTab);
+            renderTabContent(state.currentTab);
             updateCounters();
             showToast(`Đã xóa ${selectedLinks.length} link`, 'success');
             addLog(`Đã xóa ${selectedLinks.length} link`, 'info');
