@@ -1,5 +1,22 @@
-- name: Extract HTML
+name: Extract HTML from URLs
+on:
+  workflow_dispatch:
+    inputs:
+      gist_id:
+        description: 'ID of the Gist containing URLs'
+        required: true
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Gist
         run: |
+          curl -H "Authorization: token ${{ secrets.dat_kep }}" \
+               -o urls.txt \
+               https://api.github.com/gists/${{ github.event.inputs.gist_id }}
+            - name: Extract HTML
+                run: |
           INPUT_TXT="urls.txt"
           OUTPUT_JSON="processed_urls.jsonl"
           retries=0
@@ -77,3 +94,9 @@
           done < "$INPUT_TXT"
 
           printf "✅ Created JSON Lines file: %s\n" "$OUTPUT_JSON"
+      - name: Update Gist
+        run: |
+          curl -X PATCH \
+               -H "Authorization: token ${{ secrets.dat_kep }}" \
+               -d "{\"files\":{\"processed_urls.jsonl\":{\"content\":\"$(cat processed_urls.jsonl | jq -R -s .)\"}}}" \
+               https://api.github.com/gists/${{ github.event.inputs.gist_id }}
