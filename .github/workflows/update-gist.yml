@@ -2,8 +2,10 @@ name: Update Gist with processed links
 
 on:
   push:
-    branches:
-      - main
+    paths:
+      - 'linkcu2.txt'  # Chạy khi linkcu2.txt thay đổi
+  schedule:
+    - cron: '0 0 * * *'  # Chạy mỗi ngày lúc 00:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -13,6 +15,9 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
+
+    - name: Install jq
+      run: sudo apt-get update && sudo apt-get install -y jq
 
     - name: Process links
       run: |
@@ -31,15 +36,15 @@ jobs:
 
         get_post_type_from_url() {
           case "$1" in
-            *"/reel/"*) echo "reel" ;;
-            *"/story.php"*|*"/stories/"*) echo "story" ;;
-            *"/video"*|*"/watch"*|*"/videos/"*) echo "video" ;;
-            *"/photo"*|*"/photos/"*) echo "photo" ;;
-            *"/groups/"*) echo "group_post" ;;
-            *"/posts/"*) echo "post" ;;
-            *"/events/"*) echo "event" ;;
-            *"facebook.com/"*) echo "profile" ;;
-            *) echo "unknown" ;;
+            *"/reel/"*) echo "reel";;
+            *"/story.php"*|*"/stories/"*) echo "story";;
+            *"/video"*|*"/watch"*|*"/videos/"*) echo "video";;
+            *"/photo"*|*"/photos/"*) echo "photo";;
+            *"/groups/"*) echo "group_post";;
+            *"/posts/"*) echo "post";;
+            *"/events/"*) echo "event";;
+            *"facebook.com/"*) echo "profile";;
+            *) echo "unknown";;
           esac
         }
 
@@ -97,17 +102,11 @@ EOF
     - name: Upload JSON to Gist
       env:
         GIST_ID: "eaa7aafb85a6fe7546f6c6434b93810c"
+        GIST_FILE_NAME: "linkitemmmm"
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        curl -X PATCH "https://api.github.com/gists/$GIST_ID" \
-          -H "Authorization: token $GH_TOKEN" \
-          -H "Content-Type: application/json" \
-          -d @- <<EOF
-{
-  "files": {
-    "linkitemmmm": {
-      "content": "$(cat linkcu.json)"
-    }
-  }
-}
-EOF
+        content=$(cat $OUTPUT_JSON | jq -Rs .)
+        curl -s -X PATCH "https://api.github.com/gists/$GIST_ID" \
+          -H "Authorization: Bearer $GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          -d "{\"files\": {\"$GIST_FILE_NAME\": {\"content\": $content}}}"
