@@ -3,9 +3,9 @@ name: Update Gist with processed links
 on:
   push:
     paths:
-      - 'linkcu2.txt'  # Chạy khi linkcu2.txt thay đổi
+      - 'linkcu2.txt'
   schedule:
-    - cron: '0 0 * * *'  # Chạy mỗi ngày lúc 00:00 UTC
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
@@ -27,7 +27,7 @@ jobs:
         PLACEHOLDER_IMG="https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg"
         MAX_LINES=3000
 
-        > $OUTPUT_JSON  # Xóa file cũ, tạo file mới
+        > $OUTPUT_JSON
 
         decode_html_entities() {
           echo "$1" | sed -e 's/"/"/g' -e "s/'/'/g" -e 's/</</g' -e 's/>/>/g' -e 's/&/\&/g'
@@ -81,7 +81,6 @@ jobs:
           safe_desc=$(echo "$final_desc" | sed 's/"/\\"/g')
           safe_img=$(echo "$final_image" | sed 's/"/\\"/g')
 
-          # Dùng printf để xuất JSON từng dòng
           printf '{"url":"%s","title":"%s","description":"%s","image":"%s","status":"%s","post_type":"%s"}\n' \
             "$url" "$safe_title" "$safe_desc" "$safe_img" "$status" "$post_type" >> $OUTPUT_JSON
         done < $INPUT_TXT
@@ -93,7 +92,12 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         content=$(cat $OUTPUT_JSON | jq -Rs .)
-        curl -s -X PATCH "https://api.github.com/gists/$GIST_ID" \
+        response=$(curl -s -o response.json -w "%{http_code}" -X PATCH "https://api.github.com/gists/$GIST_ID" \
           -H "Authorization: Bearer $GH_TOKEN" \
           -H "Accept: application/vnd.github+json" \
-          -d "{\"files\": {\"$GIST_FILE_NAME\": {\"content\": $content}}}"
+          -d "{\"files\": {\"$GIST_FILE_NAME\": {\"content\": $content}}}")
+        if [ "$response" -ne 200 ]; then
+          echo "Error: Failed to update Gist. HTTP status: $response"
+          cat response.json
+          exit 1
+        fi
