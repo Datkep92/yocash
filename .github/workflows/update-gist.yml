@@ -27,8 +27,7 @@ jobs:
         PLACEHOLDER_IMG="https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg"
         MAX_LINES=3000
 
-        echo "[" > $OUTPUT_JSON
-        first=1
+        > $OUTPUT_JSON  # Xóa file cũ, tạo file mới
 
         decode_html_entities() {
           echo "$1" | sed -e 's/"/"/g' -e "s/'/'/g" -e 's/</</g' -e 's/>/>/g' -e 's/&/\&/g'
@@ -82,22 +81,10 @@ jobs:
           safe_desc=$(echo "$final_desc" | sed 's/"/\\"/g')
           safe_img=$(echo "$final_image" | sed 's/"/\\"/g')
 
-          [ "$first" -eq 0 ] && echo "," >> $OUTPUT_JSON
-          first=0
-
-          cat <<EOF >> $OUTPUT_JSON
-{
-  "url": "$url",
-  "title": "$safe_title",
-  "description": "$safe_desc",
-  "image": "$safe_img",
-  "status": "$status",
-  "post_type": "$post_type"
-}
-EOF
+          # Dùng printf để xuất JSON từng dòng
+          printf '{"url":"%s","title":"%s","description":"%s","image":"%s","status":"%s","post_type":"%s"}\n' \
+            "$url" "$safe_title" "$safe_desc" "$safe_img" "$status" "$post_type" >> $OUTPUT_JSON
         done < $INPUT_TXT
-
-        echo "]" >> $OUTPUT_JSON
 
     - name: Upload JSON to Gist
       env:
