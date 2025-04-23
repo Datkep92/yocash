@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       gist_id:
-        description: 'ID of the Gist chứa danh sách URL (mỗi dòng 1 link)'
+        description: 'ID của Gist chứa file .txt với danh sách URL'
         required: true
 
 jobs:
@@ -12,25 +12,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Cài jq
+      - name: Cài đặt jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Tải Gist về file txt
+      - name: Tải danh sách URL từ Gist (txt)
         run: |
           set -e
-          echo "🔍 Tải nội dung Gist..."
           GIST_ID="${{ github.event.inputs.gist_id }}"
-          GIST_DATA=$(curl -s -H "Authorization: token ${{ secrets.dat_kep }}" https://api.github.com/gists/$GIST_ID)
+          echo "📥 Đang tải nội dung Gist $GIST_ID..."
 
-          RAW_URL=$(echo "$GIST_DATA" | jq -r '.files | to_entries[0].value.raw_url')
+          GIST_DATA=$(curl -s -H "Authorization: token ${{ secrets.dat_kep }}" \
+            https://api.github.com/gists/$GIST_ID)
+
+          RAW_URL=$(echo "$GIST_DATA" | jq -r '.files | to_entries[] | select(.value.filename | endswith(".txt")) | .value.raw_url')
 
           if [ -z "$RAW_URL" ]; then
-            echo "❌ Không lấy được raw_url từ Gist"
+            echo "❌ Không tìm thấy file .txt trong Gist!"
             exit 3
           fi
 
           curl -s "$RAW_URL" -o urls.txt
-          echo "✅ Đã tải danh sách URL vào urls.txt"
+          echo "✅ Đã tải urls.txt"
 
       - name: Trích xuất HTML và metadata
         run: |
@@ -41,7 +43,7 @@ jobs:
           > "$OUTPUT_JSON"
 
           if [ ! -s "$INPUT_TXT" ]; then
-            echo "❌ File rỗng hoặc không tồn tại"
+            echo "❌ File urls.txt rỗng hoặc không tồn tại"
             exit 3
           fi
 
@@ -82,7 +84,7 @@ jobs:
                 status="success"
               else
                 if echo "$html" | grep -qi "login"; then status="login"
-                elif echo "$html" | grep -qi "content not found\|unavailable\|removed"; then status="link_hỏng"
+                elif echo "$html" | grep -qi "not found\|unavailable\|removed"; then status="link_hỏng"
                 else status="error"
                 fi
               fi
@@ -98,9 +100,9 @@ jobs:
 
           done < "$INPUT_TXT"
 
-          echo "✅ Đã tạo file $OUTPUT_JSON"
+          echo "✅ Đã tạo $OUTPUT_JSON"
 
-      - name: Cập nhật lại Gist
+      - name: Cập nhật Gist với kết quả
         run: |
           set -e
           GIST_ID="${{ github.event.inputs.gist_id }}"
@@ -112,4 +114,4 @@ jobs:
             -d "{\"files\":{\"processed_urls.jsonl\":{\"content\":$CONTENT}}}" \
             https://api.github.com/gists/$GIST_ID
 
-          echo "✅ Gist đã được cập nhật thành công!"
+          echo "✅ Đã cập nhật processed_urls.jsonl trong Gist!"
