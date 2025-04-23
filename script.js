@@ -531,10 +531,16 @@ function undoAction() {
 }
 
 function renderFilteredLinks(container, filter) {
-    console.log('renderFilteredLinks called with filter:', filter); // Debug
+    console.log('renderFilteredLinks called with filter:', filter);
     container.innerHTML = '';
     state.currentFilter = filter;
     let filteredLinks = [];
+
+    // Debug: Log tất cả image URL
+    console.log('All images:', state.links.map(l => ({
+        url: l.url,
+        image: l.image
+    })).filter(l => l.image));
 
     switch (filter) {
         case 'group':
@@ -577,9 +583,21 @@ function renderFilteredLinks(container, filter) {
         case 'success':
             filteredLinks = state.links.filter(l => l.status === 'success' && l.blacklistStatus !== 'blacklisted');
             break;
+
+        case 'image_scontent':
+            filteredLinks = state.links.filter(l => {
+                if (!l.image || typeof l.image !== 'string') {
+                    console.log(`Invalid or missing image for link: ${l.url}, image: ${l.image}`);
+                    return false;
+                }
+                const isScontent = l.image.includes('scontent') && l.image.includes('fbcdn.net') && !l.image.includes('/ads/') && !l.image.includes('/adsarchive/');
+                console.log(`Checking image_scontent: ${l.image} -> ${isScontent}`);
+                return isScontent && l.blacklistStatus !== 'blacklisted';
+            });
+            break;
         default:
-            filteredLinks = state.links.filter(l => l.blacklistStatus !== 'blacklisted'); // Loại bỏ blacklist
-            state.currentFilter = 'group'; // Đặt lại filter mặc định
+            filteredLinks = state.links.filter(l => l.blacklistStatus !== 'blacklisted');
+            state.currentFilter = 'group';
             break;
     }
 
@@ -591,34 +609,53 @@ function renderFilteredLinks(container, filter) {
         );
     }
 
-    if (filteredLinks.length === 0) {
-        container.innerHTML = '<p>Không có link nào phù hợp.</p>';
-    } else if (filter === 'duplicate') {
-        const urlGroups = {};
-        filteredLinks.forEach(l => {
-            if (!urlGroups[l.url]) urlGroups[l.url] = [];
-            urlGroups[l.url].push(l);
-        });
-
-        Object.entries(urlGroups).forEach(([url, links]) => {
-            const groupDiv = document.createElement('div');
-            groupDiv.className = 'grouped-duplicates';
-            groupDiv.innerHTML = `<h4>URL: ${url} (${links.length} link)</h4>`;
-            const linksContainer = document.createElement('div');
-            linksContainer.className = 'duplicates-container';
-            links.forEach((link, index) => {
-                const linkItem = createLinkItem(link, index);
-                linksContainer.appendChild(linkItem);
-            });
-            groupDiv.appendChild(linksContainer);
-            container.appendChild(groupDiv);
-        });
-    } else {
-        filteredLinks.forEach((link, index) => {
-            const linkItem = createLinkItem(link, index);
-            container.appendChild(linkItem);
-        });
+    let label = '';
+    if (filter === 'image_ads') {
+        label = 'Ảnh Facebook Ads';
+    } else if (filter === 'image_scontent') {
+        label = 'Ảnh SContent CDN';
     }
+
+    if (filteredLinks.length === 0) {
+        container.innerHTML = `<p>Không có link nào phù hợp${label ? ' (' + label + ')' : ''}.</p>`;
+    } else {
+        if (label) {
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'filter-label';
+            labelDiv.textContent = label;
+            container.appendChild(labelDiv);
+        }
+
+        if (filter === 'duplicate') {
+            const urlGroups = {};
+            filteredLinks.forEach(l => {
+                if (!urlGroups[l.url]) urlGroups[l.url] = [];
+                urlGroups[l.url].push(l);
+            });
+
+            Object.entries(urlGroups).forEach(([url, links]) => {
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'grouped-duplicates';
+                groupDiv.innerHTML = `<h4>URL: ${url} (${links.length} link)</h4>`;
+                const linksContainer = document.createElement('div');
+                linksContainer.className = 'duplicates-container';
+                links.forEach((link, index) => {
+                    const linkItem = createLinkItem(link, index);
+                    linksContainer.appendChild(linkItem);
+                });
+                groupDiv.appendChild(linksContainer);
+                container.appendChild(groupDiv);
+            });
+        } else {
+            filteredLinks.forEach((link, index) => {
+                const linkItem = createLinkItem(link, index);
+                container.appendChild(linkItem);
+            });
+        }
+    }
+
+    console.log(`Filter: ${filter}, Links: ${filteredLinks.length}`);
+    console.log('Filtered images:', filteredLinks.slice(0, 5).map(l => l.image));
     updateCounters();
 }
 
@@ -674,23 +711,31 @@ function createLinkItem(link, index) {
     `;
 
     // Sự kiện checkbox
-    item.querySelector('.link-checkbox').addEventListener('change', () => toggleCheckbox(link));
+    const checkbox = item.querySelector('.link-checkbox');
+    checkbox.addEventListener('change', () => {
+        console.log(`Checkbox changed for link ${link.id}: ${checkbox.checked}`);
+        toggleCheckbox(link);
+        item.classList.toggle('checked', link.checked);
+    });
 
     // Sự kiện nhấp vào thumbnail
     item.querySelector('.link-thumbnail').addEventListener('click', (e) => {
         e.stopPropagation();
         e.preventDefault();
         toggleCheckbox(link);
+        item.classList.toggle('checked', link.checked);
     });
 
-    // Sự kiện nhấp vào nội dung (khôi phục hành vi mở URL)
+    // Sự kiện nhấp vào nội dung
     item.querySelector('.link-content').addEventListener('click', (e) => {
         e.stopPropagation();
         if (!link.checked) {
             toggleCheckbox(link);
+            item.classList.toggle('checked', link.checked);
             window.open(link.url, '_blank');
         } else {
             toggleCheckbox(link);
+            item.classList.toggle('checked', link.checked);
         }
     });
 
@@ -1079,7 +1124,6 @@ function showSearchResultsPopup(searchQuery) {
 }
 
 function showFilterPopup() {
-    // Xóa popup cũ để tránh trùng lặp sự kiện
     const oldPopup = document.querySelector('.filter-modal-overlay');
     if (oldPopup) {
         oldPopup.remove();
@@ -1101,9 +1145,9 @@ function showFilterPopup() {
           <button id="filter-search-btn"><i class="fas fa-search"></i></button>
         </div>
         <div class="filter-buttons-container">
-          ${['group', 'photo', 'story', 'video', 'reel', 'post', 'iframe', 'duplicate', 'blacklist', 'note', 'success']
+          ${['group', 'photo', 'story', 'video', 'reel', 'post', 'iframe', 'duplicate', 'blacklist', 'note', 'success', 'image_scontent']
             .map(filter => `
-            <button class="filter-btn ${state.currentFilter === filter ? 'active' : ''}" 
+            <button class="filter-btn ${state.currentFilter === filter ? 'active' : ''} ${filter === 'image_scontent' ? 'image-scontent-filter' : ''}" 
                     data-filter="${filter}">
               ${getFilterLabel(filter)}
             </button>`).join('')}
@@ -1171,29 +1215,37 @@ function showFilterPopup() {
         border-radius: 4px;
         cursor: pointer;
         text-align: center;
+        transition: all 0.2s ease;
       }
       .filter-btn.active {
         background: #007bff;
         color: white;
         border-color: #007bff;
       }
+      
+      .link-item.checked {
+        border: 2px solid #007bff !important;
+        border-radius: 4px;
+      }
+      .link-item:hover {
+        border: 2px solid #007bff !important;
+        border-radius: 4px;
+        cursor: pointer;
+      }
     </style>
-  `;
+    `;
 
     document.body.appendChild(popup);
 
-    // Hàm đóng popup
     const closePopup = () => {
         if (document.body.contains(popup)) {
             document.body.removeChild(popup);
         }
     };
 
-    // Sự kiện đóng popup
     popup.querySelector('.filter-modal-close').addEventListener('click', closePopup);
     popup.addEventListener('click', (e) => e.target === popup && closePopup());
 
-    // Hàm lấy nhãn filter
     function getFilterLabel(filter) {
         const labels = {
             'group': 'Group',
@@ -1206,18 +1258,18 @@ function showFilterPopup() {
             'duplicate': 'Trùng lặp',
             'blacklist': 'Blacklist',
             'note': 'Ghi chú',
-            'success': 'Thành công'
+            'success': 'Thành công',
+            'image_ads': 'Ảnh Ads',
+            'image_scontent': 'Ảnh SContent'
         };
         return labels[filter] || filter;
     }
 
-    // Reset currentFilter nếu là 'all'
     if (state.currentFilter === 'all') {
         state.currentFilter = 'group';
         saveData({ currentFilter: true });
     }
 
-    // Xử lý tìm kiếm
     const searchInput = popup.querySelector('#filter-search-input');
     const searchBtn = popup.querySelector('#filter-search-btn');
 
@@ -1226,7 +1278,7 @@ function showFilterPopup() {
             const query = searchInput.value.trim();
             if (query) {
                 state.dateFilter.searchQuery = query;
-                state.currentFilter = 'group'; // Mặc định lọc với 'group' khi tìm kiếm
+                state.currentFilter = 'group';
                 saveData({ dateFilter: true, currentFilter: true });
                 switchTab('filter');
                 renderTabContent('filter');
@@ -1243,11 +1295,10 @@ function showFilterPopup() {
         });
     }
 
-    // Xử lý chọn filter
     popup.querySelectorAll('.filter-btn').forEach(btn => {
         btn.addEventListener('click', function () {
             const filter = this.dataset.filter;
-            console.log('Filter applied:', filter, 'Tab:', state.currentTab); // Debug
+            console.log('Filter applied:', filter, 'Tab:', state.currentTab);
             if (filter) {
                 state.currentFilter = filter;
                 state.dateFilter.searchQuery = '';
@@ -3844,13 +3895,18 @@ function getFilteredLinksForFilterTab() {
         case 'success':
             filteredLinks = state.links.filter(l => l.status === 'success' && l.blacklistStatus !== 'blacklisted');
             break;
+        case 'image_ads':
+            filteredLinks = state.links.filter(l => l.image && typeof l.image === 'string' && l.image.includes('fbcdn.net') && (l.image.includes('/ads/') || l.image.includes('/adsarchive/')) && l.blacklistStatus !== 'blacklisted');
+            break;
+        case 'image_scontent':
+            filteredLinks = state.links.filter(l => l.image && typeof l.image === 'string' && l.image.includes('scontent') && l.image.includes('fbcdn.net') && !l.image.includes('/ads/') && !l.image.includes('/adsarchive/') && l.blacklistStatus !== 'blacklisted');
+            break;
         default:
             filteredLinks = state.links.filter(l => l.blacklistStatus !== 'blacklisted');
-            state.currentFilter = 'group'; // Đặt lại filter mặc định
+            state.currentFilter = 'group';
             break;
     }
 
-    // Áp dụng tìm kiếm nếu có
     const searchQuery = state.dateFilter.searchQuery.toLowerCase();
     if (searchQuery) {
         filteredLinks = filteredLinks.filter(l =>
@@ -4434,3 +4490,10 @@ function showEditFanpagePopup(fanpage) {
     }, 100);
 }
 
+function isFacebookAdsImage(url) {
+    return url && typeof url === 'string' && url.includes('fbcdn.net') && (url.includes('/ads/') || url.includes('/adsarchive/'));
+}
+
+function isScontentImage(url) {
+    return url && typeof url === 'string' && /scontent.*\.fbcdn\.net/.test(url);
+}
