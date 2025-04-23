@@ -1,6 +1,6 @@
-- name: Process links
+name: Process links
   run: |
-    set -x  # Debug mode
+    set -x
     INPUT_TXT="linkcu2.txt"
     OUTPUT_JSON="linkcu.json"
     PLACEHOLDER_IMG="https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg"
@@ -30,12 +30,8 @@
     while read -r url; do
       [ -z "$url" ] && continue
       html=$(curl -sL --max-time 15 -A "Mozilla/5.0" "$url")
-      if [ $? -ne 0 ]; then
-        echo "Error: Curl failed for URL $url"
-        continue
-      fi
-
-      if [ -z "$html" ]; then
+      if [ $? -ne 0 ] || [ -z "$html" ]; then
+        echo "Error: Cannot fetch URL $url, skipping..."
         title="Bài viết lỗi"
         desc="Không có nội dung"
         img="$PLACEHOLDER_IMG"
