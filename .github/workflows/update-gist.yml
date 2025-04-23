@@ -101,7 +101,7 @@ jobs:
       run: |
         set -x
         content=$(cat $OUTPUT_JSON | jq -Rs .)
-        response=$(curl -s -o response.json -w "%{http_code}" -X PATCH "https://api.github.com/gists/$GIST_ID" -H "Authorization: Bearer <new-pat-token>" -H "Accept: application/vnd.github+json" -d "{\"files\": {\"$GIST_FILE_NAME\": {\"content\": \"$content\"}}}")
+        response=$(curl -s -o response.json -w "%{http_code}" -X PATCH "https://api.github.com/gists/$GIST_ID" -H "Authorization: Bearer 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" -H "Accept: application/vnd.github+json" -d "{\"files\": {\"$GIST_FILE_NAME\": {\"content\": \"$content\"}}}")
         if [ "$response" -ne 200 ]; then
           echo "Error: Failed to update Gist. HTTP status: $response"
           cat response.json
