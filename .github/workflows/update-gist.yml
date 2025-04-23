@@ -15,15 +15,15 @@
 
     get_post_type_from_url() {
       case "$1" in
-        *"/reel/"*) echo "reel" ;;
-        *"/story.php"*|*"/stories/"*) echo "story" ;;
-        *"/video"*|*"/watch"*|*"/videos/"*) echo "video" ;;
-        *"/photo"*|*"/photos/"*) echo "photo" ;;
-        *"/groups/"*) echo "group_post" ;;
-        *"/posts/"*) echo "post" ;;
-        *"/events/"*) echo "event" ;;
-        *"facebook.com/"*) echo "profile" ;;
-        *) echo "unknown" ;;
+        *"/reel/"*) echo "reel";;
+        *"/story.php"*|*"/stories/"*) echo "story";;
+        *"/video"*|*"/watch"*|*"/videos/"*) echo "video";;
+        *"/photo"*|*"/photos/"*) echo "photo";;
+        *"/groups/"*) echo "group_post";;
+        *"/posts/"*) echo "post";;
+        *"/events/"*) echo "event";;
+        *"facebook.com/"*) echo "profile";;
+        *) echo "unknown";;
       esac
     }
 
@@ -73,7 +73,7 @@
   "status": "$status",
   "post_type": "$post_type"
 }
-    EOF
+EOF
     done < $INPUT_TXT
 
     echo "]" >> $OUTPUT_JSON
