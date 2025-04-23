@@ -73,8 +73,9 @@ jobs:
               -H "Upgrade-Insecure-Requests: 1" \
               "$url")
 
-            # Debug: Lưu HTML để kiểm tra
-            printf '%s\n' "$html" > "debug_html_$(basename "$url").html"
+            # Debug: Lưu HTML với tên file hợp lệ
+            safe_filename=$(basename "$url" | sed 's/[^a-zA-Z0-9._-]/_/g')
+            printf '%s\n' "$html" > "debug_html_${safe_filename}.html"
 
             if [ $? -ne 0 ] || [ -z "$html" ]; then
               printf "Error: Cannot fetch URL %s, skipping...\n" "$url"
@@ -115,9 +116,16 @@ jobs:
           rm temp_urls.txt
           echo "✅ Đã tạo $OUTPUT_JSON"
 
+      - name: Lưu kết quả processed_urls.jsonl
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: processed-urls
+          path: processed_urls.jsonl
+
       - name: Lưu HTML debug (nếu cần)
         if: always()
-        uses: actions/upload-artifact@v4  # Cập nhật từ @v3 lên @v4
+        uses: actions/upload-artifact@v4
         with:
           name: debug-html-files
           path: debug_html_*.html
