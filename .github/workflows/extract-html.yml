@@ -1,46 +1,54 @@
-name: Extract Facebook Metadata
-
+name: Extract HTML from URLs
 on:
   workflow_dispatch:
     inputs:
       gist_id:
-        description: 'ID Gist chứa file urls.txt'
+        description: 'ID của Gist chứa file .txt với danh sách URL'
         required: true
 
 jobs:
   extract:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Cài đặt jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Cài đặt công cụ cần thiết
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+          # Cài đặt pup để parse HTML
+          curl -sL https://github.com/ericchiang/pup/releases/download/v0.4.0/pup_v0.4.0_linux_amd64.zip -o pup.zip
+          unzip pup.zip
+          sudo mv pup /usr/local/bin/
+          pup --version
 
       - name: Lấy nội dung file raw từ Gist
         run: |
-          set -e
-          GIST_ID="${{ github.event.inputs.gist_id }}"
+          # Lấy raw_url của file urls.txt trong Gist
           RAW_URL=$(curl -s -H "Authorization: token ${{ secrets.dat_kep }}" \
-            https://api.github.com/gists/$GIST_ID \
+            https://api.github.com/gists/${{ github.event.inputs.gist_id }} \
             | jq -r '.files["urls.txt"].raw_url')
 
-          if [ -z "$RAW_URL" ]; then
-            echo "❌ Không tìm thấy file urls.txt"
+          # Kiểm tra nếu không tìm thấy file urls.txt
+          if [ -z "$RAW_URL" ] || [ "$RAW_URL" = "null" ]; then
+            printf "❌ Error: File urls.txt not found in Gist.\n"
             exit 1
           fi
 
-          curl -sL "$RAW_URL" -o urls.txt
+          # Tải danh sách URL dạng raw text
+          curl -L "$RAW_URL" -o urls.txt
+          echo "✅ Đã tải urls.txt thành công"
 
-      - name: Trích xuất HTML & Metadata
+      - name: Trích xuất HTML và metadata
         run: |
-          set -e
           placeholder_img="https://cuacuondaiphucvinh.com/wp-content/uploads/2024/12/icon-loi.jpg"
-          OUTPUT="merged.json"
-          echo "[" > $OUTPUT
 
           decode_html_entities() {
             input="$1"
-            decoded=$(echo "$input" | sed -e 's/&quot;/"/g' -e "s/&#39;/'/g" -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g')
-            echo "$decoded" | awk '{
+            decoded=$(printf '%s' "$input" | sed -e 's/"/"/g' \
+                                            -e "s/'/'/g" \
+                                            -e 's/</</g' \
+                                            -e 's/>/>/g' \
+                                            -e 's/&/\&/g')
+            printf '%s' "$decoded" | awk '{
               while (match($0, /&#[0-9]+;/)) {
                 num = substr($0, RSTART+2, RLENGTH-3);
                 chr = sprintf("%c", num);
@@ -51,83 +59,103 @@ jobs:
           }
 
           escape_json() {
-            echo "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+            printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
           }
 
-          get_post_type() {
-            case "$1" in
-              *"/reel/"*) echo "reel" ;;
-              *"/story.php"*|*"/stories/"*) echo "story" ;;
-              *"/video"*|*"/watch"*|*"/videos/"*) echo "video" ;;
-              *"/photo"*|*"/photos/"*) echo "photo" ;;
-              *"/groups/"*) echo "group_post" ;;
-              *"/posts/"*) echo "post" ;;
-              *"/events/"*) echo "event" ;;
-              *"facebook.com/"*) echo "profile" ;;
-              *) echo "unknown" ;;
-            esac
+          get_post_type_from_url() {
+            url="$1"
+            if printf '%s' "$url" | grep -qE "/reel/"; then printf "reel"
+            elif printf '%s' "$url" | grep -qE "/story.php|/stories/"; then printf "story"
+            elif printf '%s' "$url" | grep -qE "/video|/watch|/videos/"; then printf "video"
+            elif printf '%s' "$url" | grep -qE "/photo|/photos/"; then printf "photo"
+            elif printf '%s' "$url" | grep -qE "/groups/"; then printf "group_post"
+            elif printf '%s' "$url" | grep -qE "/posts/"; then printf "post"
+            elif printf '%s' "$url" | grep -qE "/events/"; then printf "event"
+            elif printf '%s' "$url" | grep -qE "facebook.com/[^/]+/$"; then printf "profile"
+            else printf "unknown"
+            fi
           }
 
-          first=true
-          while read -r url; do
-            [ -z "$url" ] && continue
+          INPUT_TXT="urls.txt"
+          OUTPUT_JSON="processed_urls.jsonl"
+          > "$OUTPUT_JSON"
 
-            info=$(curl -Ls -o /dev/null -w "%{url_effective} %{http_code}" "$url")
-            final_url=$(echo "$info" | awk '{print $1}')
-            [ -z "$final_url" ] && continue
+          while read -r line; do
+            [ -z "$line" ] && continue
+            raw_link=$(printf '%s' "$line" | grep -oE 'https?://(www\.|m\.|fb\.|l\.|business\.)?facebook\.com[^[:space:]]+' | tail -n1)
+            [ -z "$raw_link" ] && printf '{"error":"Không tìm thấy URL hợp lệ trong dòng: %s"}\n' "$line" >> "$OUTPUT_JSON" && continue
 
-            if echo "$final_url" | grep -q "login"; then
-              decoded=$(echo "$final_url" | sed -E 's/.*next=([^\&]+).*/\1/' | sed 's/%/\\x/g' | xargs -0 echo -e)
-              final_url="$decoded"
+            info=$(curl -Ls -o /dev/null -w "%{url_effective} %{http_code}" "$raw_link")
+            final_link=$(printf '%s' "$info" | awk '{print $1}')
+            http_code=$(printf '%s' "$info" | awk '{print $2}')
+            [ -z "$final_link" ] && printf '{"error":"Không lấy được URL cuối cho %s"}\n' "$line" >> "$OUTPUT_JSON" && continue
+
+            if printf '%s' "$final_link" | grep -q "login"; then
+              decoded=$(printf '%s' "$final_link" | sed -E 's/.*next=([^\&]+).*/\1/' | sed 's/%/\\x/g' | xargs -0 printf '%b')
+              final_link="$decoded"
             fi
 
-            html=$(curl -sL --max-time 15 -A "Mozilla/5.0" "$final_url")
+            cleaned=$(printf '%s' "$final_link" | sed -E 's/([&?])(mibextid|rdid|share_url)=[^&]*//g' |
+                      sed -E 's/[&?]+$//' | sed -E 's/[?&]{2,}/\&/g' | sed -E 's/\?&/\?/' | sed -E 's/&\?/\?/')
 
-            title="Bài viết lỗi"
-            desc="Không có nội dung"
-            image="$placeholder_img"
-            status="error"
+            # Tải HTML với headers mô phỏng trình duyệt
+            html=$(curl -sL --max-time 15 \
+              -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
+              -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8" \
+              -H "Accept-Language: en-US,en;q=0.5" \
+              "$cleaned")
+
+            final_title="Bài viết lỗi"
+            final_desc="Không có nội dung"
+            final_image="$placeholder_img"
+            post_status="error"
 
             if [ -n "$html" ]; then
-              raw_title=$(echo "$html" | grep -oP '(?<=<title>).*?(?=</title>)' | head -n1)
-              og_title=$(echo "$html" | grep -oP '<meta property="og:title" content="\K[^"]*' | head -n1)
-              og_desc=$(echo "$html" | grep -oP '<meta property="og:description" content="\K[^"]*' | head -n1)
-              og_image=$(echo "$html" | grep -oP '<meta property="og:image" content="\K[^"]*' | head -n1)
+              # Dùng pup để trích xuất thông tin từ HTML
+              title=$(printf '%s' "$html" | pup 'title text{}' | head -n1)
+              og_title=$(printf '%s' "$html" | pup 'meta[property="og:title"] attr{content}' | head -n1)
+              og_desc=$(printf '%s' "$html" | pup 'meta[property="og:description"] attr{content}' | head -n1)
+              og_image=$(printf '%s' "$html" | pup 'meta[property="og:image"] attr{content}' | head -n1)
 
-              [ -n "$og_title" ] && title="$og_title"
-              [ -z "$og_title" ] && [ -n "$raw_title" ] && title="$raw_title"
-              [ -n "$og_desc" ] && desc=$(decode_html_entities "$og_desc")
-              [ -n "$og_image" ] && image="$og_image"
+              [ -n "$og_title" ] && final_title="$og_title"
+              [ -z "$og_title" ] && [ -n "$title" ] && final_title="$title"
 
-              if [ -n "$og_desc" ] || [ "$image" != "$placeholder_img" ]; then
-                status="success"
+              [ -n "$og_desc" ] && final_desc=$(decode_html_entities "$og_desc")
+              [ -n "$og_image" ] && final_image="$og_image"
+
+              if [ -n "$og_desc" ] || [ "$final_image" != "$placeholder_img" ]; then
+                post_status="success"
               else
-                echo "$html" | grep -qi "login" && status="login"
-                echo "$html" | grep -qi "content not found\|unavailable\|removed" && status="link_hỏng"
+                if printf '%s' "$html" | grep -qi "login"; then post_status="login"
+                elif printf '%s' "$html" | grep -qi "content not found\|unavailable\|removed"; then post_status="link_hỏng"
+                else post_status="error"
+                fi
               fi
             fi
 
-            title=$(escape_json "$title")
-            desc=$(escape_json "$desc")
-            image=$(escape_json "$image")
-            post_type=$(get_post_type "$final_url")
+            post_type=$(get_post_type_from_url "$cleaned")
+            safe_title=$(escape_json "$final_title")
+            safe_desc=$(escape_json "$final_desc")
+            safe_img=$(escape_json "$final_image")
 
-            [ "$first" = true ] && first=false || echo "," >> $OUTPUT
+            printf '{"url":"%s","title":"%s","description":"%s","image":"%s","status":"%s","post_type":"%s"}\n' \
+              "$cleaned" "$safe_title" "$safe_desc" "$safe_img" "$post_status" "$post_type" >> "$OUTPUT_JSON"
 
-            printf '{"url":"%s","title":"%s","description":"%s","image":"%s","status":"%s","post_type":"%s"}' \
-              "$final_url" "$title" "$desc" "$image" "$status" "$post_type" >> $OUTPUT
+          done < "$INPUT_TXT"
 
-          done < urls.txt
+          echo "✅ Đã tạo $OUTPUT_JSON"
 
-          echo "]" >> $OUTPUT
-          echo "✅ Đã tạo merged.json"
-
-      - name: Ghi kết quả vào Gist
+      - name: Cập nhật Gist với kết quả
         run: |
-          CONTENT=$(jq -Rs . < merged.json)
+          set -e
+          GIST_ID="${{ github.event.inputs.gist_id }}"
+          CONTENT=$(jq -Rs . < processed_urls.jsonl)
+
           curl -X PATCH \
             -H "Authorization: token ${{ secrets.dat_kep }}" \
             -H "Accept: application/vnd.github+json" \
-            -d "{\"files\":{\"merged.json\":{\"content\":$CONTENT}}}" \
-            https://api.github.com/gists/${{ github.event.inputs.gist_id }}
-          echo "✅ Đã cập nhật merged.json trong Gist"
+            -H "Content-Type: application/json" \
+            -d "{\"files\":{\"processed_urls.jsonl\":{\"content\":$CONTENT}}}" \
+            https://api.github.com/gists/$GIST_ID
+
+          echo "✅ Đã cập nhật processed_urls.jsonl trong Gist!"
