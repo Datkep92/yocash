@@ -1,4 +1,4 @@
-name: Process links
+- name: Process links
   run: |
     set -x
     INPUT_TXT="linkcu2.txt"
@@ -25,55 +25,55 @@ name: Process links
         *"facebook.com/"*) echo "profile";;
         *) echo "unknown";;
       esac
-      }
-  
-      while read -r url; do
-        [ -z "$url" ] && continue
-        html=$(curl -sL --max-time 15 -A "Mozilla/5.0" "$url")
-        if [ $? -ne 0 ] || [ -z "$html" ]; then
-          echo "Error: Cannot fetch URL $url, skipping..."
-          title="Bài viết lỗi"
-          desc="Không có nội dung"
-          img="$PLACEHOLDER_IMG"
-          status="error"
+    }
+
+    while read -r url; do
+      [ -z "$url" ] && continue
+      html=$(curl -sL --max-time 15 -A "Mozilla/5.0" "$url")
+      if [ $? -ne 0 ] || [ -z "$html" ]; then
+        echo "Error: Cannot fetch URL $url, skipping..."
+        title="Bài viết lỗi"
+        desc="Không có nội dung"
+        img="$PLACEHOLDER_IMG"
+        status="error"
+      else
+        title=$(echo "$html" | grep -oP '(?<=<title>).*?(?=</title>)' | head -n1)
+        og_title=$(echo "$html" | grep -oP '<meta property="og:title" content="\K[^"]*' | head -n1)
+        og_desc=$(echo "$html" | grep -oP '<meta property="og:description" content="\K[^"]*' | head -n1)
+        og_img=$(echo "$html" | grep -oP '<meta property="og:image" content="\K[^"]*' | head -n1)
+
+        final_title=${og_title:-${title:-"Bài viết lỗi"}}
+        final_desc=$(decode_html_entities "${og_desc:-"Không có nội dung"}")
+        final_image=${og_img:-$PLACEHOLDER_IMG}
+
+        if [ -n "$og_desc" ] || [ "$final_image" != "$PLACEHOLDER_IMG" ]; then
+          status="success"
         else
-          title=$(echo "$html" | grep -oP '(?<=<title>).*?(?=</title>)' | head -n1)
-          og_title=$(echo "$html" | grep -oP '<meta property="og:title" content="\K[^"]*' | head -n1)
-          og_desc=$(echo "$html" | grep -oP '<meta property="og:description" content="\K[^"]*' | head -n1)
-          og_img=$(echo "$html" | grep -oP '<meta property="og:image" content="\K[^"]*' | head -n1)
-  
-          final_title=${og_title:-${title:-"Bài viết lỗi"}}
-          final_desc=$(decode_html_entities "${og_desc:-"Không có nội dung"}")
-          final_image=${og_img:-$PLACEHOLDER_IMG}
-  
-          if [ -n "$og_desc" ] || [ "$final_image" != "$PLACEHOLDER_IMG" ]; then
-            status="success"
-          else
-            if echo "$html" | grep -qi "login"; then status="login"
-            elif echo "$html" | grep -qi "content not found\|unavailable\|removed"; then status="link_hỏng"
-            else status="error"
-            fi
+          if echo "$html" | grep -qi "login"; then status="login"
+          elif echo "$html" | grep -qi "content not found\|unavailable\|removed"; then status="link_hỏng"
+          else status="error"
           fi
         fi
-  
-        post_type=$(get_post_type_from_url "$url")
-        safe_title=$(echo "$final_title" | sed 's/"/\\"/g')
-        safe_desc=$(echo "$final_desc" | sed 's/"/\\"/g')
-        safe_img=$(echo "$final_image" | sed 's/"/\\"/g')
-  
-        [ "$first" -eq 0 ] && echo "," >> $OUTPUT_JSON
-        first=0
-  
-        cat <<EOF >> $OUTPUT_JSON
-    {
-    "url": "$url",
-    "title": "$safe_title",
-    "description": "$safe_desc",
-    "image": "$safe_img",
-    "status": "$status",
-    "post_type": "$post_type"
-    }
-    EOF
-      done < $INPUT_TXT
-  
-      echo "]" >> $OUTPUT_JSON
+      fi
+
+      post_type=$(get_post_type_from_url "$url")
+      safe_title=$(echo "$final_title" | sed 's/"/\\"/g')
+      safe_desc=$(echo "$final_desc" | sed 's/"/\\"/g')
+      safe_img=$(echo "$final_image" | sed 's/"/\\"/g')
+
+      [ "$first" -eq 0 ] && echo "," >> $OUTPUT_JSON
+      first=0
+
+      cat <<EOF >> $OUTPUT_JSON
+  {
+  "url": "$url",
+  "title": "$safe_title",
+  "description": "$safe_desc",
+  "image": "$safe_img",
+  "status": "$status",
+  "post_type": "$post_type"
+  }
+  EOF
+    done < $INPUT_TXT
+
+    echo "]" >> $OUTPUT_JSON
