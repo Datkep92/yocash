@@ -1,0 +1,17 @@
+name: Extract HTML from URLs
+on:
+  workflow_dispatch:
+    inputs:
+      gist_id:
+        description: 'ID of the Gist containing URLs'
+        required: true
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Gist
+        run: |
+          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+               -o urls.txt \
+               https://api.github.com/gists/${{ github.event.inputs.gist_id }}
