@@ -2921,7 +2921,7 @@ function getTypeLabel(type) {
 }
 
 // Refactored deleteFanpage
-functioeFanpage(fanpageId) {
+function deleteFanpage(fanpageId) {
     const fanpage = state.fanpages.find(f => f.id === fanpageId);
     if (!fanpage) return;
 
@@ -3409,7 +3409,7 @@ function getTypeLabel(type) {
 }
 
 // Refactored deleteFanpage
-functioeFanpage(fanpageId) {
+function deleteFanpage(fanpageId) {
     const fanpage = state.fanpages.find(f => f.id === fanpageId);
     if (!fanpage) return;
 
