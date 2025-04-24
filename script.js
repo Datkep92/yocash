@@ -742,7 +742,7 @@ function createLinkItem(link, index) {
         }
     });
 
-    
+
 
     // Sự kiện nút xóa
     item.querySelector('.link-index').addEventListener('click', () => {
@@ -1687,46 +1687,40 @@ function updateSelectionBar(fanpages) {
     }
 }
 
+function getFilteredFanpages(filter, searchQuery = '') {
+    let filtered = state.fanpages;
 
+    if (searchQuery) {
+        filtered = filtered.filter(f =>
+            removeVietnameseTones(f.name.toLowerCase()).includes(removeVietnameseTones(searchQuery.toLowerCase()))
+        );
+    }
 
-// Cập nhật hàm getFilteredFanpages để hỗ trợ lọc trùng lặp
-function getFilteredFanpages(filter) {
-    let fanpages = [...state.fanpages];
-
-    // Áp dụng bộ lọc
     switch (filter) {
         case 'fanpage':
-            fanpages = fanpages.filter(f => f.type === 'fanpage');
+            filtered = filtered.filter(f => f.type === 'fanpage');
             break;
         case 'profile':
-            fanpages = fanpages.filter(f => f.type === 'profile');
+            filtered = filtered.filter(f => f.type === 'profile');
             break;
         case 'profile-pro':
-            fanpages = fanpages.filter(f => f.type === 'profile-pro');
+            filtered = filtered.filter(f => f.type === 'profile-pro');
             break;
         case 'duplicate':
-            fanpages = findDuplicateFanpages();
+            const urlGroups = {};
+            filtered.forEach(f => {
+                const baseUrl = f.url.split('?')[0];
+                if (!urlGroups[baseUrl]) urlGroups[baseUrl] = [];
+                urlGroups[baseUrl].push(f);
+            });
+            filtered = Object.values(urlGroups).filter(group => group.length > 1).flat();
+            break;
+        case 'all':
+        default:
             break;
     }
 
-    // Sắp xếp
-    return fanpages.sort((a, b) => {
-        const typeOrder = {
-            'profile-pro': 1,
-            'profile': 2,
-            'fanpage': 3
-        };
-        const typeA = typeOrder[a.type] || 3;
-        const typeB = typeOrder[b.type] || 3;
-        if (typeA !== typeB) return typeA - typeB;
-
-        const titleA = a.name.toLowerCase();
-        const titleB = b.name.toLowerCase();
-        const numA = parseInt(titleA.match(/\d+/)?.[0] || '0', 10);
-        const numB = parseInt(titleB.match(/\d+/)?.[0] || '0', 10);
-        if (numA && numB) return numA - numB;
-        return titleA.localeCompare(titleB);
-    });
+    return filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
 }
 
 // Hàm tìm fanpage trùng lặp (theo URL hoặc tiêu đề)
@@ -1758,79 +1752,115 @@ function findDuplicateFanpages() {
     return Array.from(duplicates);
 }
 
-function renderFanpageList(container, fanpages) {
-    container.innerHTML = ''; // Xóa toàn bộ nội dung cũ trong container
+function renderFanpageTab() {
+    const container = elements.linkLists['fanpage'];
+    if (!container) {
+        addLog('Không tìm thấy container fanpage-tab', 'error');
+        return;
+    }
 
-    // Chỉ render danh sách fanpage, không render fanpage-list-header
-    fanpages.forEach((fanpage, index) => {
-        const item = document.createElement('div');
-        item.className = `link-item ${fanpage.checked ? 'checked' : ''}`;
-        item.dataset.id = fanpage.id;
+    container.innerHTML = `
+    <div class="fanpage-controls">
+      <div class="fanpage-search">
+        <input type="text" id="fanpage-filter-search" placeholder="Tìm kiếm theo tên fanpage...">
+      </div>
+      <div class="filter-buttons">
+        <button class="filter-btn active" data-filter="all">All</button>
+        <button class="filter-btn" data-filter="fanpage">Fanpage</button>
+        <button class="filter-btn" data-filter="profile">Cá nhân</button>
+        <button class="filter-btn" data-filter="profile-pro">Pro</button>
+        <button class="filter-btn" data-filter="duplicate">Trùng</button>
+      </div>
+      <div class="action-buttons">
+        <button class="export-btn" id="export-fanpage-json">Xuất</button>
+      </div>
+    </div>
+    <div class="selection-bar">
+      <input type="checkbox" id="select-all-fanpages">
+      <span class="selection-info">All</span>
+      <span class="selection-count">0/${state.fanpages.length}</span>
+      <button class="delete-selected-btn" disabled>Xóa</button>
+    </div>
+    <div class="fanpage-list"></div>
+    <style>
+      .fanpage-search {
+        margin-bottom: 10px;
+      }
+      #fanpage-filter-search {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+      .link-item.hovered {
+        background: #e0f7fa;
+        transition: background 0.3s;
+      }
+    </style>
+  `;
 
-        const indexStr = (index + 1).toString();
-        const indexDigits = indexStr.split('').map(digit => `<span>${digit}</span>`).join('');
+    const listContainer = container.querySelector('.fanpage-list');
+    let currentFilter = 'all';
 
-        item.innerHTML = `
-            <input type="checkbox" class="link-checkbox" ${fanpage.checked ? 'checked' : ''}>
-            <div class="link-row">
-                <button class="link-index" title="Xóa fanpage này">
-                    ${indexDigits}
-                </button>
-                <div class="link-thumbnail">
-                    <div class="fanpage-iframe-mini" data-url="${fanpage.url}"></div>
-                </div>
-                <div class="link-content">
-                    <div class="link-title">${fanpage.name}</div>
-                    <div class="link-description">${fanpage.description || ''}</div>
-                    <div class="link-meta">
-                        <span class="link-time">${formatDateTime(fanpage.date)}</span>
-                        <span class="link-status ${fanpage.type}">${getTypeLabel(fanpage.type)}</span>
-                    </div>
-                </div>
-                <div class="link-actions">
-                    <button class="action-btn edit" title="Sửa"><i class="fas fa-edit"></i></button>
-                </div>
-            </div>
-        `;
+    // Debounced search
+    const debouncedSearch = debounce(() => {
+        updateFanpageList();
+    }, config.debounceDelay);
 
-        container.appendChild(item);
-        loadMiniIframe(item.querySelector('.fanpage-iframe-mini'), fanpage.url);
+    // Search input event
+    container.querySelector('#fanpage-filter-search').addEventListener('input', debouncedSearch);
 
-        // Sự kiện checkbox
-        const checkbox = item.querySelector('.link-checkbox');
-        checkbox.addEventListener('change', () => {
-            fanpage.checked = checkbox.checked;
-            updateSelectionBar(fanpages); // Cập nhật selection-bar
-            saveData({ fanpages: true });
-            item.classList.toggle('checked', fanpage.checked);
-        });
-
-        // Sự kiện click vào item (toggle checkbox)
-        item.addEventListener('click', (e) => {
-            if (!e.target.closest('.link-checkbox') && !e.target.closest('.link-actions')) {
-                checkbox.checked = !checkbox.checked;
-                checkbox.dispatchEvent(new Event('change'));
-            }
-        });
-
-        // Sự kiện nút chỉnh sửa
-        item.querySelector('.edit').addEventListener('click', (e) => {
-            e.stopPropagation();
-            showEditFanpagePopup(fanpage);
-        });
-
-        // Sự kiện nút STT (Xóa fanpage)
-        item.querySelector('.link-index').addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (confirm(`Xóa fanpage: ${fanpage.url}?`)) {
-                deleteFanpage(fanpage.id);
-            }
+    // Filter buttons
+    container.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            container.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentFilter = btn.dataset.filter;
+            updateFanpageList();
         });
     });
+
+    // Export button
+    container.querySelector('#export-fanpage-json').addEventListener('click', () => {
+        const filteredFanpages = getFilteredFanpages(currentFilter, container.querySelector('#fanpage-filter-search')?.value.trim().toLowerCase() || '');
+        exportFanpagesToJSON(filteredFanpages);
+    });
+
+    // Select all checkbox
+    container.querySelector('#select-all-fanpages').addEventListener('change', function () {
+        const filteredFanpages = getFilteredFanpages(currentFilter, container.querySelector('#fanpage-filter-search')?.value.trim().toLowerCase() || '');
+        const isChecked = this.checked;
+
+        filteredFanpages.forEach(fanpage => {
+            fanpage.checked = isChecked;
+        });
+
+        saveData({ fanpages: true });
+        updateFanpageList();
+    });
+
+    // Delete selected button
+    container.querySelector('.delete-selected-btn').addEventListener('click', () => {
+        const filteredFanpages = getFilteredFanpages(currentFilter, container.querySelector('#fanpage-filter-search')?.value.trim().toLowerCase() || '');
+        const selectedFanpages = filteredFanpages.filter(f => f.checked);
+
+        if (selectedFanpages.length === 0) return;
+
+        if (confirm(`Bạn có chắc muốn xóa ${selectedFanpages.length} fanpage đã chọn?`)) {
+            saveBackup('deleteFanpages', { fanpages: [...selectedFanpages] });
+            state.fanpages = state.fanpages.filter(f => !selectedFanpages.includes(f));
+
+            saveData({ fanpages: true });
+            updateFanpageList();
+            showToast(`Đã xóa ${selectedFanpages.length} fanpage`, 'success');
+            addLog(`Đã xóa ${selectedFanpages.length} fanpage`, 'info');
+        }
+    });
+
+    // Initial render
+    updateFanpageList();
 }
-
-
-
 
 function groupFanpagesByType(fanpages) {
     const groups = {
@@ -2920,7 +2950,6 @@ function getTypeLabel(type) {
     }[type] || 'Không xác định';
 }
 
-// Refactored deleteFanpage
 function deleteFanpage(fanpageId) {
     const fanpage = state.fanpages.find(f => f.id === fanpageId);
     if (!fanpage) return;
@@ -2928,6 +2957,7 @@ function deleteFanpage(fanpageId) {
     saveBackup('deleteFanpage', { fanpage: { ...fanpage } });
     state.fanpages = state.fanpages.filter(f => f.id !== fanpageId);
     saveData({ fanpages: true });
+    updateFanpageList(); // Update list incrementally
     updateCounters();
     showToast(`Đã xóa fanpage ${fanpage.name}`, 'success');
     addLog(`Đã xóa fanpage ${fanpage.name} (ID: ${fanpage.id})`, 'info');
@@ -4216,7 +4246,6 @@ function showAddLinkDialog() {
     };
 }
 
-// Refactored deleteSelectedFanpages
 function deleteSelectedFanpages() {
     const selectedFanpages = state.fanpages.filter(f => f.checked);
     if (selectedFanpages.length === 0) {
@@ -4228,17 +4257,17 @@ function deleteSelectedFanpages() {
         saveBackup('deleteFanpages', { fanpages: [...selectedFanpages] });
         state.fanpages = state.fanpages.filter(f => !f.checked);
 
-        // Reset tất cả checkbox
+        // Reset all checkboxes
         state.fanpages.forEach(f => f.checked = false);
 
         saveData({ fanpages: true });
+        updateFanpageList(); // Update list incrementally
         updateCounters();
         showToast(`Đã xóa ${selectedFanpages.length} fanpage`, 'success');
         addLog(`Đã xóa ${selectedFanpages.length} fanpage`, 'info');
     }
 }
 
-// Refactored showAddFanpageDialog
 function showAddFanpageDialog() {
     const dialog = document.createElement('div');
     dialog.className = 'add-fanpage-modal-overlay';
@@ -4249,6 +4278,11 @@ function showAddFanpageDialog() {
         <button class="add-fanpage-modal-close">×</button>
       </div>
       <div class="add-fanpage-modal-body">
+        <div class="add-fanpage-form-group">
+          <label>Tìm kiếm Fanpage</label>
+          <input type="text" id="fanpage-search" placeholder="Nhập tên fanpage để tìm..." class="add-fanpage-form-control">
+          <div id="fanpage-search-results" class="search-results"></div>
+        </div>
         <div class="add-fanpage-form-group">
           <label>URL Fanpage/Profile</label>
           <input type="text" id="fanpage-url" placeholder="Nhập URL" class="add-fanpage-form-control">
@@ -4277,10 +4311,65 @@ function showAddFanpageDialog() {
         <button id="confirm-add-fanpage" class="add-fanpage-btn btn-primary">Thêm</button>
       </div>
     </div>
+    <style>
+      .search-results {
+        max-height: 150px;
+        overflow-y: auto;
+        margin-top: 5px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 5px;
+      }
+      .search-result-item {
+        padding: 5px;
+        cursor: pointer;
+        border-bottom: 1px solid #eee;
+      }
+      .search-result-item:hover {
+        background: #f0f0f0;
+      }
+      .search-result-item:last-child {
+        border-bottom: none;
+      }
+    </style>
   `;
     document.body.appendChild(dialog);
 
     let selectedType = 'fanpage';
+
+    // Debounced search function
+    const debouncedSearch = debounce((query) => {
+        const resultsContainer = dialog.querySelector('#fanpage-search-results');
+        resultsContainer.innerHTML = '';
+        if (!query) return;
+
+        const filteredFanpages = state.fanpages.filter(f =>
+            removeVietnameseTones(f.name.toLowerCase()).includes(removeVietnameseTones(query.toLowerCase()))
+        );
+
+        if (filteredFanpages.length === 0) {
+            resultsContainer.innerHTML = '<p>Không tìm thấy fanpage</p>';
+        } else {
+            filteredFanpages.forEach(f => {
+                const resultItem = document.createElement('div');
+                resultItem.className = 'search-result-item';
+                resultItem.textContent = f.name;
+                resultItem.addEventListener('click', () => {
+                    dialog.querySelector('#fanpage-url').value = f.url;
+                    dialog.querySelector('#fanpage-title').value = f.name;
+                    dialog.querySelectorAll('.profile-btn').forEach(b => b.classList.remove('active'));
+                    dialog.querySelector(`.profile-btn[data-type="${f.type}"]`).classList.add('active');
+                    selectedType = f.type;
+                });
+                resultsContainer.appendChild(resultItem);
+            });
+        }
+    }, config.debounceDelay);
+
+    // Search input event
+    dialog.querySelector('#fanpage-search').addEventListener('input', (e) => {
+        debouncedSearch(e.target.value.trim());
+    });
 
     dialog.querySelectorAll('.profile-btn').forEach(btn => {
         btn.addEventListener('click', function () {
@@ -4300,10 +4389,6 @@ function showAddFanpageDialog() {
 
         if (!isValidUrl(url)) return showToast('URL không hợp lệ', 'warning');
         if (!title) return showToast('Vui lòng nhập tiêu đề', 'warning');
-        if (isFanpageExists(url)) {
-            if (!confirm(`Fanpage ${url} đã tồn tại. Ghi đè?`)) return showToast('Đã hủy thêm fanpage', 'warning');
-            state.fanpages = state.fanpages.filter(f => f.url.split('?')[0] !== url.split('?')[0]);
-        }
 
         const newFanpage = {
             id: generateId(),
@@ -4320,6 +4405,8 @@ function showAddFanpageDialog() {
         state.fanpages.unshift(newFanpage);
         saveBackup('addFanpages', { fanpages: [newFanpage] });
         saveData({ fanpages: true });
+        updateFanpageList(); // Update list incrementally
+        highlightAndScrollToFanpage(newFanpage.id); // Highlight and scroll
         updateCounters();
         showToast(`Đã thêm ${selectedType === 'fanpage' ? 'Fanpage' : 'Profile'} mới`, 'success');
         addLog(`Đã thêm fanpage: ${title} (ID: ${newFanpage.id})`, 'success');
@@ -4334,13 +4421,150 @@ function showAddFanpageDialog() {
     dialog.querySelector('#cancel-add-fanpage').addEventListener('click', () => document.body.removeChild(dialog));
     dialog.querySelector('.add-fanpage-modal-close').addEventListener('click', () => document.body.removeChild(dialog));
 }
+function updateFanpageList() {
+    const container = elements.linkLists['fanpage'];
+    if (!container) {
+        addLog('Không tìm thấy container fanpage-tab', 'error');
+        return;
+    }
 
+    const listContainer = container.querySelector('.fanpage-list');
+    const currentFilter = container.querySelector('.filter-btn.active')?.dataset.filter || 'all';
+    const searchQuery = container.querySelector('#fanpage-filter-search')?.value.trim().toLowerCase() || '';
+
+    const filteredFanpages = getFilteredFanpages(currentFilter, searchQuery);
+
+    // Clear existing list
+    listContainer.innerHTML = '';
+
+    // Render filtered fanpages
+    filteredFanpages.forEach((fanpage, index) => {
+        const item = createFanpageItem(fanpage, index);
+        listContainer.appendChild(item);
+    });
+
+    // Update selection bar
+    updateSelectionBar(filteredFanpages);
+}
+
+function createFanpageItem(fanpage, index) {
+    const item = document.createElement('div');
+    item.className = `link-item ${fanpage.checked ? 'checked' : ''}`;
+    item.dataset.id = fanpage.id;
+
+    const indexStr = (index + 1).toString();
+    const indexDigits = indexStr.split('').map(digit => `<span>${digit}</span>`).join('');
+
+    item.innerHTML = `
+        <input type="checkbox" class="link-checkbox" ${fanpage.checked ? 'checked' : ''}>
+        <div class="link-row">
+          <button class="link-index" title="Xóa fanpage này">
+            ${indexDigits}
+          </button>
+          <div class="link-thumbnail">
+            <div class="fanpage-iframe-mini" data-url="${fanpage.url}"></div>
+          </div>
+          <div class="link-content">
+            <div class="link-title">${fanpage.name}</div>
+            <div class="link-description">${fanpage.description || ''}</div>
+            <div class="link-meta">
+              <span class="link-time">${formatDateTime(fanpage.date)}</span>
+              <span class="link-status ${fanpage.type}">${getTypeLabel(fanpage.type)}</span>
+            </div>
+          </div>
+          <div class="link-actions">
+            <button class="action-btn edit" title="Sửa"><i class="fas fa-edit"></i></button>
+          </div>
+        </div>
+    `;
+
+    loadMiniIframe(item.querySelector('.fanpage-iframe-mini'), fanpage.url);
+
+    // Checkbox event
+    const checkbox = item.querySelector('.link-checkbox');
+    checkbox.addEventListener('change', () => {
+        fanpage.checked = checkbox.checked;
+        updateSelectionBar(getFilteredFanpages(
+            elements.linkLists['fanpage'].querySelector('.filter-btn.active')?.dataset.filter || 'all',
+            elements.linkLists['fanpage'].querySelector('#fanpage-filter-search')?.value.trim().toLowerCase() || ''
+        ));
+        saveData({ fanpages: true });
+        item.classList.toggle('checked', fanpage.checked);
+    });
+
+    // Item click event (toggle checkbox)
+    item.addEventListener('click', (e) => {
+        if (!e.target.closest('.link-checkbox') && !e.target.closest('.link-actions')) {
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change'));
+        }
+    });
+
+    // Edit button event
+    item.querySelector('.edit').addEventListener('click', (e) => {
+        e.stopPropagation();
+        showEditFanpagePopup(fanpage);
+    });
+
+    // Delete button event
+    item.querySelector('.link-index').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm(`Xóa fanpage: ${fanpage.url}?`)) {
+            removeFanpageItem(fanpage.id);
+        }
+    });
+
+    return item;
+}
+
+function removeFanpageItem(fanpageId) {
+    const fanpage = state.fanpages.find(f => f.id === fanpageId);
+    if (!fanpage) return;
+
+    // Save backup for undo
+    saveBackup('deleteFanpage', { fanpage: { ...fanpage } });
+
+    // Remove fanpage from state
+    state.fanpages = state.fanpages.filter(f => f.id !== fanpageId);
+
+    // Remove DOM element
+    const container = elements.linkLists['fanpage'];
+    const listContainer = container.querySelector('.fanpage-list');
+    const item = listContainer.querySelector(`.link-item[data-id="${fanpageId}"]`);
+    if (item) {
+        item.remove();
+    }
+
+    // Update selection bar
+    const currentFilter = container.querySelector('.filter-btn.active')?.dataset.filter || 'all';
+    const searchQuery = container.querySelector('#fanpage-filter-search')?.value.trim().toLowerCase() || '';
+    updateSelectionBar(getFilteredFanpages(currentFilter, searchQuery));
+
+    // Save data and update counters
+    saveData({ fanpages: true });
+    updateCounters();
+
+    // Show toast and log
+    showToast(`Đã xóa fanpage ${fanpage.name}`, 'success');
+    addLog(`Đã xóa fanpage ${fanpage.name} (ID: ${fanpage.id})`, 'info');
+}
+
+function highlightAndScrollToFanpage(fanpageId) {
+    const container = elements.linkLists['fanpage'];
+    const listContainer = container.querySelector('.fanpage-list');
+    const item = listContainer.querySelector(`.link-item[data-id="${fanpageId}"]`);
+    if (!item) return;
+
+    // Add hover effect
+    item.classList.add('hovered');
+    setTimeout(() => item.classList.remove('hovered'), 2000);
+
+    // Scroll to item
+    smoothScroll(listContainer, item.offsetTop);
+}
 function showEditFanpagePopup(fanpage) {
-    // Tạo popup overlay
     const popup = document.createElement('div');
     popup.className = 'edit-fanpage-modal-overlay';
-
-    // HTML nội dung popup
     popup.innerHTML = `
     <div class="edit-fanpage-modal-dialog">
       <div class="edit-fanpage-modal-header">
@@ -4393,28 +4617,21 @@ function showEditFanpagePopup(fanpage) {
       </div>
     </div>
   `;
-
-    // Thêm popup vào DOM
     document.body.appendChild(popup);
 
-    // Xử lý sự kiện chọn loại fanpage
     popup.querySelectorAll('.edit-fanpage-type-btn').forEach(btn => {
         btn.addEventListener('click', function () {
-            // Bỏ active tất cả các nút
             popup.querySelectorAll('.edit-fanpage-type-btn').forEach(b => b.classList.remove('active'));
-            // Active nút được chọn
             this.classList.add('active');
         });
     });
 
-    // Xử lý sự kiện lưu thay đổi
     popup.querySelector('#save-fanpage').addEventListener('click', () => {
         const url = popup.querySelector('#edit-fanpage-url').value.trim();
         const name = popup.querySelector('#edit-fanpage-title').value.trim();
         const description = popup.querySelector('#edit-fanpage-description').value.trim();
         const type = popup.querySelector('.edit-fanpage-type-btn.active').dataset.type;
 
-        // Validate dữ liệu
         if (!isValidUrl(url)) {
             showToast('URL không hợp lệ', 'warning');
             return;
@@ -4425,7 +4642,6 @@ function showEditFanpagePopup(fanpage) {
             return;
         }
 
-        // Lưu trạng thái cũ để undo
         saveBackup('editFanpage', {
             fanpage: {
                 ...fanpage,
@@ -4434,58 +4650,44 @@ function showEditFanpagePopup(fanpage) {
             }
         });
 
-        // Cập nhật thông tin fanpage
         Object.assign(fanpage, {
             url,
             name,
             description,
             type,
-            status: 'pending', // Đánh dấu cần kiểm tra lại
-            lastChecked: null  // Reset thời gian kiểm tra
+            status: 'pending',
+            lastChecked: null
         });
 
-        // Lưu dữ liệu
         saveData({ fanpages: true });
-
-        // Cập nhật giao diện
+        updateFanpageList(); // Update list incrementally
         updateCounters();
-
-        // Thông báo
         showToast(`Đã cập nhật fanpage ${name}`, 'success');
         addLog(`Cập nhật fanpage ${name} (ID: ${fanpage.id})`, 'info');
-
-        // Đóng popup
         document.body.removeChild(popup);
     });
 
-    // Xử lý sự kiện xóa fanpage
     popup.querySelector('#delete-fanpage').addEventListener('click', () => {
         if (confirm(`Bạn có chắc muốn xóa fanpage "${fanpage.name}"?`)) {
-            // Gọi hàm xóa fanpage
             deleteFanpage(fanpage.id);
-            // Đóng popup
             document.body.removeChild(popup);
         }
     });
 
-    // Xử lý sự kiện hủy
     popup.querySelector('#cancel-edit').addEventListener('click', () => {
         document.body.removeChild(popup);
     });
 
-    // Xử lý sự kiện đóng popup
     popup.querySelector('.edit-fanpage-modal-close').addEventListener('click', () => {
         document.body.removeChild(popup);
     });
 
-    // Đóng popup khi click bên ngoài
     popup.addEventListener('click', (e) => {
         if (e.target === popup) {
             document.body.removeChild(popup);
         }
     });
 
-    // Focus vào ô nhập URL khi hiển thị popup
     setTimeout(() => {
         const urlInput = popup.querySelector('#edit-fanpage-url');
         if (urlInput) {
@@ -4501,7 +4703,7 @@ function isFacebookAdsImage(url) {
 
 function isScontentImage(url) {
     return url && typeof url === 'string' && /scontent.*\.fbcdn\.net/.test(url);
-    
+
 } function openFacebookLink(url) {
     const fbAppUrl = url.replace('https://www.facebook.com', 'fb://').replace('https://m.facebook.com', 'fb://');
     const fallbackUrl = url;
