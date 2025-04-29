@@ -3119,13 +3119,46 @@ async function deleteItems({ items, type, confirmMessage, backupType, successMes
         showToast('Không có mục nào được chọn', 'warning');
         return;
     }
+
     if (confirm(confirmMessage)) {
         saveBackup(backupType, { [type]: [...items] });
+
         if (type === 'links') {
-            state.links = state.links.filter(l => !items.includes(l));
+            if (items.every(item => item.checked !== undefined)) {
+                // Có checkbox -> xóa các item đã chọn
+                state.links = state.links.filter(l => !items.includes(l));
+            } else {
+                // Không checkbox -> xóa các link trùng url+id, giữ lại 1 bản
+                const seen = new Set();
+                state.links = state.links.filter(link => {
+                    const key = `${link.url}|${link.id}`;
+                    if (seen.has(key)) {
+                        return false; // trùng -> xoá
+                    } else {
+                        seen.add(key);
+                        return true; // lần đầu -> giữ
+                    }
+                });
+            }
         } else {
-            state.fanpages = state.fanpages.filter(f => !items.includes(f));
+            if (items.every(item => item.checked !== undefined)) {
+                // Có checkbox -> xóa các item đã chọn
+                state.fanpages = state.fanpages.filter(f => !items.includes(f));
+            } else {
+                // Không checkbox -> xóa các fanpage trùng url+id, giữ lại 1 bản
+                const seen = new Set();
+                state.fanpages = state.fanpages.filter(fanpage => {
+                    const key = `${fanpage.url}|${fanpage.id}`;
+                    if (seen.has(key)) {
+                        return false; // trùng -> xoá
+                    } else {
+                        seen.add(key);
+                        return true; // lần đầu -> giữ
+                    }
+                });
+            }
         }
+
         await saveData({ [type]: true });
         renderFn();
         updateCounters();
