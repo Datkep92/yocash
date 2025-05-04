@@ -594,19 +594,24 @@
                     <button id="delete-selected" class="btn btn-danger">
                         <i class="fas fa-trash"></i> Xóa
                     </button>
-                    ${state.currentTab !== 'fanpage' ? `
+                    ${state.currentTab === 'all-link' ? `
                     <button id="export-gist" class="btn btn-primary">
                         <i class="fas fa-code-branch"></i> Xuất Gist
                     </button>
+                    ` : ''}
+                    ${state.currentTab === 'filter' && state.lastActiveTab === 'links' ? `
                     <button id="export-url" class="btn btn-primary">
                         <i class="fas fa-link"></i> Xuất URL
                     </button>
                     ` : ''}
-                    ${(state.currentTab === 'fanpage' || (state.currentTab === 'filter' && state.lastActiveTab === 'fanpage')) ? `
+                    ${state.currentTab === 'filter' && state.lastActiveTab === 'fanpage' ? `
                     <button id="export-fanpage" class="btn btn-primary">
                         <i class="fas fa-code-branch"></i> Xuất Fanpage
                     </button>
                     ` : ''}
+                    <button id="unselect-all" class="btn btn-secondary">
+                        <i class="fas fa-times"></i> Bỏ chọn
+                    </button>
                 </div>
             </div>
         </div>
@@ -615,7 +620,7 @@
     document.body.appendChild(dialog);
 
     dialog.querySelector('#delete-selected').addEventListener('click', () => {
-        if (state.currentTab === 'fanpage') {
+        if (state.currentTab === 'fanpage' || (state.currentTab === 'filter' && state.lastActiveTab === 'fanpage')) {
             deleteSelectedFanpages();
         } else {
             deleteSelected();
@@ -623,14 +628,18 @@
         document.body.removeChild(dialog);
     });
 
-    if (state.currentTab !== 'fanpage') {
-        dialog.querySelector('#export-gist').addEventListener('click', () => {
+    const exportGistBtn = dialog.querySelector('#export-gist');
+    if (exportGistBtn) {
+        exportGistBtn.addEventListener('click', () => {
             const selectedLinks = state.links.filter(l => l.checked);
             exportToGist(selectedLinks);
             document.body.removeChild(dialog);
         });
+    }
 
-        dialog.querySelector('#export-url').addEventListener('click', async () => {
+    const exportUrlBtn = dialog.querySelector('#export-url');
+    if (exportUrlBtn) {
+        exportUrlBtn.addEventListener('click', async () => {
             const selectedLinks = state.links.filter(l => l.checked);
             if (selectedLinks.length === 0) {
                 showToast('Vui lòng chọn ít nhất một link để xuất URL', 'warning');
@@ -656,6 +665,20 @@
             document.body.removeChild(dialog);
         });
     }
+
+    dialog.querySelector('#unselect-all').addEventListener('click', () => {
+        if (state.currentTab === 'fanpage' || (state.currentTab === 'filter' && state.lastActiveTab === 'fanpage')) {
+            const fanpages = getFilteredFanpages(currentFilter);
+            fanpages.forEach(f => f.checked = false);
+            saveData({ fanpages: true });
+        } else {
+            const links = getLinksForCurrentTab();
+            links.forEach(l => l.checked = false);
+            saveData({ links: true });
+        }
+        renderTabContent(state.currentTab);
+        document.body.removeChild(dialog);
+    });
 
     dialog.querySelector('.modal-close').addEventListener('click', () => {
         document.body.removeChild(dialog);
