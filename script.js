@@ -668,11 +668,19 @@
 
     dialog.querySelector('#unselect-all').addEventListener('click', () => {
         if (state.currentTab === 'fanpage' || (state.currentTab === 'filter' && state.lastActiveTab === 'fanpage')) {
-            const fanpages = getFilteredFanpages(currentFilter);
+            const fanpages = getFilteredFanpages(state.currentFilter); // Sử dụng state.currentFilter
+            if (!fanpages) {
+                showToast('Không tìm thấy danh sách fanpage để bỏ chọn', 'warning');
+                return;
+            }
             fanpages.forEach(f => f.checked = false);
             saveData({ fanpages: true });
         } else {
             const links = getLinksForCurrentTab();
+            if (!links) {
+                showToast('Không tìm thấy danh sách link để bỏ chọn', 'warning');
+                return;
+            }
             links.forEach(l => l.checked = false);
             saveData({ links: true });
         }
