@@ -599,7 +599,7 @@
                         <i class="fas fa-code-branch"></i> Xuất Gist
                     </button>
                     ` : ''}
-                    ${state.currentTab === 'filter' && state.lastActiveTab === 'links' ? `
+                    ${state.currentTab === 'filter' && state.lastActiveTab !== 'fanpage' ? `
                     <button id="export-url" class="btn btn-primary">
                         <i class="fas fa-link"></i> Xuất URL
                     </button>
@@ -667,18 +667,25 @@
     }
 
     dialog.querySelector('#unselect-all').addEventListener('click', () => {
+        console.log('Unselect All - State:', {
+            currentTab: state.currentTab,
+            lastActiveTab: state.lastActiveTab,
+            currentFilter: state.currentFilter
+        }); // Log để debug
         if (state.currentTab === 'fanpage' || (state.currentTab === 'filter' && state.lastActiveTab === 'fanpage')) {
-            const fanpages = getFilteredFanpages(state.currentFilter); // Sử dụng state.currentFilter
-            if (!fanpages) {
-                showToast('Không tìm thấy danh sách fanpage để bỏ chọn', 'warning');
+            const fanpages = getFilteredFanpages(state.currentFilter);
+            if (!fanpages || !Array.isArray(fanpages)) {
+                showToast('Lỗi: Không tìm thấy danh sách fanpage để bỏ chọn', 'warning');
+                console.log('Fanpages error:', fanpages);
                 return;
             }
             fanpages.forEach(f => f.checked = false);
             saveData({ fanpages: true });
         } else {
             const links = getLinksForCurrentTab();
-            if (!links) {
-                showToast('Không tìm thấy danh sách link để bỏ chọn', 'warning');
+            if (!links || !Array.isArray(links)) {
+                showToast('Lỗi: Không tìm thấy danh sách link để bỏ chọn', 'warning');
+                console.log('Links error:', links);
                 return;
             }
             links.forEach(l => l.checked = false);
